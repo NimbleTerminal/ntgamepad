@@ -39,6 +39,7 @@ jobs:
       - name: Check the site
         run: |
           node --check web/site.js
+          node --check web/compat.js
           test -s web/demos/pad.wasm
           test -s web/demo.wasm
           test -s web/booba/booba.js

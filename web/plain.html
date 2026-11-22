@@ -34,16 +34,19 @@
   li { font-size: .9rem; overflow-wrap: anywhere; }
   code { font-size: .85em; }
 </style>
+<link rel="stylesheet" href="compat.css">
 </head>
-<body>
+<body class="plain">
 <main>
   <h1>ntgamepad browser demo</h1>
   <p class="lede"><a href="./">← Terminal version</a></p>
   <p class="lede">What <code>ntgamepad</code> reads from your controllers, in WebAssembly. A browser hides controllers from a page until you press a button on one.</p>
+  <section id="compat" aria-label="What this browser can do with controllers"></section>
   <div id="pads"><p class="empty">Loading…</p></div>
   <h3>What the browser itself reports</h3>
   <div id="browser"></div>
 </main>
+<script type="module" src="compat.js"></script>
 <script src="wasm_exec.js"></script>
 <script>
   const go = new Go();

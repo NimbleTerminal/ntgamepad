@@ -6,10 +6,12 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ntgamepad · game controllers for Go</title>
   <link rel="stylesheet" href="site.css">
+  <link rel="stylesheet" href="compat.css">
 </head>
 <body>
   <header><a class="brand" href="./">ntgamepad<span>Game controllers for Go, native and in the browser.</span></a><a href="https://github.com/NimbleTerminal/ntgamepad">Source ↗</a></header>
   <main>
+    <section id="compat" aria-label="What this browser can do with controllers"></section>
     <section class="demo" aria-label="Live terminal example">
       <div class="toolbar"><h1>Controller viewer</h1><span><a href="plain.html">Plain HTML version</a> · <a id="restart" href="./">Restart</a></span></div>
       <div class="terminal-frame"><div id="terminal"></div></div>
@@ -19,6 +21,7 @@
   </main>
   <footer>The same Bubble Tea program runs in a terminal: <code>go -C examples run ./pad</code>. Powered by <a href="https://github.com/NimbleTerminal/booba">booba</a> and <a href="https://github.com/NimbleTerminal/ntpicture">ntpicture</a>.</footer>
   <script src="wasm_exec.js"></script>
+  <script type="module" src="compat.js"></script>
   <script type="module" src="site.js"></script>
 </body>
 </html>

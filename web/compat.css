@@ -1,0 +1,16 @@
+/* ntgamepad - Copyright (c) 2026 Neomantra Corp. */
+#compat { border: 1px solid #333c4b; border-radius: 10px; padding: 10px 14px; margin: 0 0 14px; background: #1a202a; color: #c9d1dc; }
+#compat h2 { font-size: 14px; margin: 0 0 6px; color: #e4e8ee; }
+#compat ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+#compat li { font-size: 13px; line-height: 1.5; }
+.compat-level { display: inline-block; min-width: 6.5em; text-align: center; border-radius: 4px; padding: 0 6px; margin-right: 4px; font-size: 12px; font-weight: 600; border: 1px solid; }
+#compat li[data-level="yes"] .compat-level { color: #8de3b6; border-color: #3f7a60; }
+#compat li[data-level="no"] .compat-level { color: #ffaaa1; border-color: #8a4a44; }
+#compat li[data-level="unknown"] .compat-level { color: #f2c38b; border-color: #7d6340; }
+@media (prefers-color-scheme: light) {
+  .plain #compat { background: #fff; border-color: #d5d9e0; color: #475467; }
+  .plain #compat h2 { color: #1c2026; }
+  .plain #compat li[data-level="yes"] .compat-level { color: #186a45; border-color: #8fc9ad; }
+  .plain #compat li[data-level="no"] .compat-level { color: #a3271c; border-color: #e3a49d; }
+  .plain #compat li[data-level="unknown"] .compat-level { color: #8a5a12; border-color: #dcbf8f; }
+}
