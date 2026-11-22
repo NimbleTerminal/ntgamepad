@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- ntgamepad - Copyright (c) 2026 Neomantra Corp. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ntgamepad browser demo</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1c2026; --bg: #f6f7f9; --card: #fff; --line: #d5d9e0; --mute: #667085; --accent: #0b7285; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e6e9ee; --bg: #14171c; --card: #1d2128; --line: #343a45; --mute: #98a2b3; --accent: #3bc9db; } }
+  body { margin: 0; padding: 2rem 1.25rem 3rem; font: 16px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.05rem; margin: 0 0 .75rem; }
+  h2 span { color: var(--mute); font-weight: 400; }
+  h3 { font-size: .95rem; margin: 2rem 0 .5rem; }
+  p { margin: .25rem 0 1rem; }
+  .lede, .empty, figcaption, li { color: var(--mute); }
+  .pad { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.25rem; margin: 1rem 0; }
+  .row { display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: center; }
+  figure { margin: 0; text-align: center; font-size: .85rem; font-variant-numeric: tabular-nums; }
+  svg { width: 7.5rem; height: 7.5rem; display: block; }
+  .well { fill: none; stroke: var(--line); stroke-width: .04; }
+  .axis { stroke: var(--line); stroke-width: .02; }
+  .dot { fill: var(--accent); }
+  .triggers { display: grid; gap: .5rem; font-size: .85rem; font-variant-numeric: tabular-nums; }
+  .triggers label { display: grid; gap: .15rem; }
+  .triggers p { margin: 0; color: var(--mute); }
+  meter { width: 9rem; }
+  .buttons { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: 1rem; }
+  .btn { border: 1px solid var(--line); border-radius: 6px; padding: .15rem .55rem; font-size: .85rem; color: var(--mute); min-width: 1.6rem; text-align: center; }
+  .btn.on { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+  ul { padding-left: 1.1rem; margin: 0; }
+  li { font-size: .9rem; overflow-wrap: anywhere; }
+  code { font-size: .85em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>ntgamepad browser demo</h1>
+  <p class="lede"><a href="./">← Terminal version</a></p>
+  <p class="lede">What <code>ntgamepad</code> reads from your controllers, in WebAssembly. A browser hides controllers from a page until you press a button on one.</p>
+  <div id="pads"><p class="empty">Loading…</p></div>
+  <h3>What the browser itself reports</h3>
+  <div id="browser"></div>
+</main>
+<script src="wasm_exec.js"></script>
+<script>
+  const go = new Go();
+  WebAssembly.instantiateStreaming(fetch("demo.wasm"), go.importObject)
+    .then(r => go.run(r.instance))
+    .catch(e => { document.getElementById("pads").innerHTML = '<p class="empty">Could not start: ' + e + '</p>'; });
+</script>
+</body>
+</html>

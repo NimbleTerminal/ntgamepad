@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- ntgamepad - Copyright (c) 2026 Neomantra Corp. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ntgamepad · game controllers for Go</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <header><a class="brand" href="./">ntgamepad<span>Game controllers for Go, native and in the browser.</span></a><a href="https://github.com/NimbleTerminal/ntgamepad">Source ↗</a></header>
+  <main>
+    <section class="demo" aria-label="Live terminal example">
+      <div class="toolbar"><h1>Controller viewer</h1><span><a href="plain.html">Plain HTML version</a> · <a id="restart" href="./">Restart</a></span></div>
+      <div class="terminal-frame"><div id="terminal"></div></div>
+      <p id="status" role="status">Starting terminal…</p>
+      <p id="help">Connect a controller and press a button on it: a browser hides controllers from a page until then. Click the terminal to focus it, then <kbd>g</kbd> switches between the picture and the cell rendition, <kbd>tab</kbd> shows the next controller, <kbd>q</kbd> quits.</p>
+    </section>
+  </main>
+  <footer>The same Bubble Tea program runs in a terminal: <code>go -C examples run ./pad</code>. Powered by <a href="https://github.com/NimbleTerminal/booba">booba</a> and <a href="https://github.com/NimbleTerminal/ntpicture">ntpicture</a>.</footer>
+  <script src="wasm_exec.js"></script>
+  <script type="module" src="site.js"></script>
+</body>
+</html>

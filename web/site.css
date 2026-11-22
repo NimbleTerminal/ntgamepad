@@ -1,0 +1,19 @@
+/* ntgamepad - Copyright (c) 2026 Neomantra Corp. */
+:root { color-scheme: dark; font-family: system-ui, sans-serif; color: #e4e8ee; background: #11151c; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: inherit; text-underline-offset: 4px; }
+header, main, footer { max-width: 1180px; margin: auto; padding: 12px 24px; }
+header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #303642; }
+.brand { font-weight: 750; font-size: 24px; text-decoration: none; }
+.brand span { display: inline; font-size: 12px; color: #9daaba; font-weight: 400; margin-left: 12px; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 13px; color: #a9b5c5; }
+h1 { font-size: 17px; margin: 0; color: #e4e8ee; }
+.terminal-frame { position: relative; height: clamp(360px, 64vh, 720px); border: 1px solid #333c4b; border-radius: 10px; overflow: hidden; background: #1e1e1e; padding: 8px; }
+#terminal { height: 100%; width: 100%; }
+#status, #help, footer { color: #a9b5c5; font-size: 13px; line-height: 1.8; }
+#status[data-error] { color: #ffaaa1; }
+kbd, code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px solid #333c4b; border-radius: 4px; padding: 1px 5px; background: #1a202a; }
+footer { border-top: 1px solid #303642; margin-top: 24px; }
+a:focus-visible { outline: 2px solid #3bc9db; outline-offset: 4px; }
+@media (max-width: 650px) { header, main, footer { padding: 10px 14px; } .brand span { display: none; } }

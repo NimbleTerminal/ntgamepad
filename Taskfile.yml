@@ -1,0 +1,103 @@
+# ntgamepad - Copyright (c) 2026 Neomantra Corp.
+
+version: '3'
+
+env:
+  GOWORK: 'off'
+  CGO_ENABLED: '0'
+
+vars:
+  FUZZ_TARGETS: FuzzJoydev FuzzStandardState FuzzSwitch2 FuzzUSBBulkEndpoints
+  FUZZTIME: 5s
+
+tasks:
+  default:
+    desc: 'Run the gate'
+    cmds:
+      - task: ci
+
+  list:
+    desc: 'List available tasks'
+    cmds:
+      - task --list-all
+
+  fmt:
+    desc: 'Format Go source'
+    cmds:
+      - gofmt -w .
+
+  fmt-check:
+    desc: 'Check Go formatting without changing files'
+    cmds:
+      - |
+        files="$(gofmt -l .)"
+        if [ -n "$files" ]; then printf '%s\n' "$files"; exit 1; fi
+
+  tidy-check:
+    desc: 'Check module metadata without changing files'
+    cmds:
+      - go mod tidy -diff
+      - go -C examples mod tidy -diff
+
+  vet:
+    desc: 'Vet for the host and every supported target'
+    cmds:
+      - go vet ./...
+      - go -C examples vet ./...
+      - GOOS=js GOARCH=wasm go -C examples vet ./...
+      - task: cross
+
+  cross:
+    desc: 'Build and vet for every target, without cgo'
+    cmds:
+      - for: ['darwin/arm64', 'darwin/amd64', 'linux/amd64', 'linux/arm64', 'windows/amd64', 'js/wasm']
+        cmd: GOOS={{splitList "/" .ITEM | first}} GOARCH={{splitList "/" .ITEM | last}} go vet ./...
+
+  test:
+    desc: 'Run the tests'
+    cmds:
+      - go test -mod=readonly -count=1 ./...
+      - go -C examples test -mod=readonly -count=1 ./...
+
+  fuzz-smoke:
+    desc: 'Run every fuzz target for FUZZTIME (default 5s)'
+    cmds:
+      - for: {var: FUZZ_TARGETS}
+        cmd: go test -mod=readonly -run='^$' -fuzz='^{{.ITEM}}$' -fuzztime={{.FUZZTIME}} .
+
+  probe:
+    desc: 'Print what the attached controllers report (the hardware check)'
+    cmds:
+      - go run ./cmd/ntgamepad-probe {{.CLI_ARGS}}
+
+  web:build:
+    desc: 'Build the browser demos into web/: the terminal viewer (through booba) and the plain HTML page'
+    cmds:
+      - mkdir -p web/demos
+      - GOOS=js GOARCH=wasm go -C examples build -o ../web/demos/pad.wasm ./pad
+      - go -C examples tool booba-assets --no-index ../web
+      - GOOS=js GOARCH=wasm go build -o web/demo.wasm ./cmd/ntgamepad-web
+
+  web:serve:
+    desc: 'Build the browser demos and serve them at http://127.0.0.1:8017/'
+    deps: [web:build]
+    cmds:
+      - python3 -m http.server 8017 --bind 127.0.0.1 --directory web
+
+  web:clean:
+    desc: 'Remove the generated browser assets, keeping the tracked pages'
+    cmds:
+      - rm -rf web/demos web/booba web/ntwebterm web/ghostty-web web/wasm_exec.js web/demo.wasm
+
+  pad:
+    desc: 'Run the controller viewer in this terminal'
+    cmds:
+      - go -C examples run ./pad
+
+  ci:
+    desc: 'Everything that must pass before a commit'
+    cmds:
+      - task: fmt-check
+      - task: tidy-check
+      - task: vet
+      - task: test
