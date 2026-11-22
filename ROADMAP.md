@@ -30,9 +30,6 @@ move to Done with their commit. A prompt an item points to is in
 - [ ] **Other platforms.** The driver is macOS only. Linux and Windows need
   their own way to send the start-up sequence.
 
-- [ ] **Publish the browser demo** on GitHub Pages, as the sibling
-  repositories do.
-
 ## Platforms
 
 - [ ] **macOS, GameController.framework path**: never tried with a controller
@@ -48,3 +45,4 @@ move to Done with their commit. A prompt an item points to is in
 
 - [x] **First release (v0.1.0)**: the library, the Switch 2 Pro Controller
   driver, the controller viewer, fuzz targets and CI.
+- [x] **Browser demo published** at <https://nimbleterminal.github.io/ntgamepad/>.

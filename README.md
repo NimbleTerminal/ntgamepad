@@ -1,6 +1,7 @@
 # ntgamepad — Game controllers for Go, native and in the browser, without cgo
 
 <p>
+    <a href="https://nimbleterminal.github.io/ntgamepad/"><img src="https://img.shields.io/badge/Live%20Demo-E24F36" alt="Live Demo"></a>
     <a href="https://github.com/NimbleTerminal/ntgamepad/tags"><img src="https://img.shields.io/github/tag/NimbleTerminal/ntgamepad.svg" alt="Latest Release"></a>
     <a href="https://pkg.go.dev/nimbleterminal.dev/ntgamepad"><img src="https://pkg.go.dev/badge/nimbleterminal.dev/ntgamepad.svg" alt="Go Reference"></a>
     <a href="https://github.com/NimbleTerminal/ntgamepad/actions/workflows/ci.yml"><img src="https://github.com/NimbleTerminal/ntgamepad/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -15,6 +16,8 @@ every controller in one layout.
 
 It includes a driver for the **Nintendo Switch 2 Pro Controller** on macOS,
 which the operating system does not recognise.
+
+**[Try the live browser demo →](https://nimbleterminal.github.io/ntgamepad/)** Connect a controller and press a button on it.
 
 ## Quickstart
 
@@ -153,6 +156,8 @@ renditions of the controller, switched with `g`:
 task pad                # in this terminal
 task web:serve          # in a browser, at http://127.0.0.1:8017/
 ```
+
+It is also published at <https://nimbleterminal.github.io/ntgamepad/>.
 
 In the browser the same program runs as WebAssembly inside a terminal, through
 [booba](https://github.com/NimbleTerminal/booba). There it also lists what the
