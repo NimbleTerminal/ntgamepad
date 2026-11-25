@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **DualSense on macOS**: a built-in HID driver for Sony's DualSense, over
+  Bluetooth and USB, reading both the pad's plain report and its enhanced
+  Bluetooth report. GameController.framework lists controllers only to
+  programs that run a main run loop, so a terminal program saw none; the
+  driver needs no run loop. A pad the driver reads is not reported a second
+  time through the framework.
+
 ## v0.1.0 (2026-11-22)
 
 Initial version of `ntgamepad`, game controller polling for Go without cgo.

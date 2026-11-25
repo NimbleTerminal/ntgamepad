@@ -115,6 +115,14 @@ func FuzzSwitch2(f *testing.F) {
 			inRange(t, switch2WebState(0, axes, pressed))
 		}
 		_ = isSwitch2Web(string(report), len(flash), len(report))
+
+		// The same bytes as a DualSense's enhanced report.
+		if ds, ok := dualSenseParseEnhanced(report); ok != (len(report) >= 11) {
+			t.Fatalf("enhanced report of %d bytes accepted: %v", len(report), ok)
+		} else if ok {
+			inRange(t, dualSenseState(0, ds))
+		}
+		inRange(t, dualSenseState(0, dualSenseInput{lx: report0(report), ly: 255, hat: report0(flash), l2: 255, buttons: 0xffffffff}))
 	})
 }
 
@@ -131,4 +139,12 @@ func FuzzUSBBulkEndpoints(f *testing.F) {
 			t.Fatalf("endpoints in %#x out %#x have the wrong direction", in, out)
 		}
 	})
+}
+
+// report0 is the first byte of b, or zero.
+func report0(b []byte) uint8 {
+	if len(b) == 0 {
+		return 0
+	}
+	return b[0]
 }

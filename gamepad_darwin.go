@@ -391,6 +391,9 @@ func (b *gcBridge) assignSlots() {
 			if ctrl == 0 || b.send0(ctrl, b.selExtGamepad) == 0 {
 				continue
 			}
+			if b.readOverHID(ctrl) {
+				continue // the HID driver reports this pad; show it once
+			}
 			held := false
 			for s := range b.slots {
 				if b.slots[s].ctrl == ctrl {
@@ -420,6 +423,17 @@ func (b *gcBridge) assignSlots() {
 		}
 		b.slots[s] = slot
 	}
+}
+
+// readOverHID reports whether the HID driver is already reading the pad the
+// framework lists as ctrl. The framework names a DualSense as the driver
+// does.
+func (b *gcBridge) readOverHID(ctrl objcID) bool {
+	if !sw2.live(kindDualSense) {
+		return false
+	}
+	ns := b.send0(ctrl, b.selVendorName)
+	return ns != 0 && cString(b.sendPtr(ns, b.selUTF8String)) == dualSenseName
 }
 
 // read is the current State of the controller in a slot.

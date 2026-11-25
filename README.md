@@ -14,8 +14,9 @@ programs: in a terminal, in a native window, or in the browser as
 WebAssembly. It builds with `CGO_ENABLED=0` on every platform and reports
 every controller in one layout.
 
-It includes a driver for the **Nintendo Switch 2 Pro Controller** on macOS,
-which the operating system does not recognise.
+On macOS it carries its own drivers for the **Nintendo Switch 2 Pro
+Controller**, which the system does not recognise, and the **Sony
+DualSense**, which the system shows only to programs with a main run loop.
 
 **[Try the live browser demo →](https://nimbleterminal.github.io/ntgamepad/)** Connect a controller and press a button on it.
 
@@ -62,7 +63,7 @@ for frame() {
 | Platform | Reads | State |
 | --- | --- | --- |
 | Browser (`js/wasm`) | `navigator.getGamepads()` | Demo page runs in Chrome and Firefox; both list the Switch 2 Pro Controller, Safari does not |
-| macOS | GameController.framework, plus a built-in driver for the Switch 2 Pro Controller over USB | Switch 2 Pro Controller detected and read; the framework path is **not yet tried with a controller** |
+| macOS | Built-in HID drivers for the Switch 2 Pro Controller (USB) and the DualSense (Bluetooth, USB); GameController.framework for the rest | Both built-in drivers work in a terminal program; the framework path lists nothing there (see below) |
 | Linux | `/dev/input/js0`–`js3` | Compiles; event decoding tested without a device |
 | Windows, others | nothing | Reports no controllers |
 
@@ -72,6 +73,7 @@ every button. Add a row when you do.
 | Platform | Controller | Result |
 | --- | --- | --- |
 | macOS 27.2, USB | Nintendo Switch 2 Pro Controller | Works with the built-in driver: sticks and buttons read correctly in the probe. Unplugging and replugging while a program runs is not yet tried. |
+| macOS 27.2, Bluetooth | Sony DualSense | Found by the built-in driver from a terminal program and read at rest, in the pad's enhanced mode. Buttons not yet checked one by one; USB not tried. |
 
 ### Browser
 
@@ -97,14 +99,30 @@ itself reports.
 
 ### macOS
 
-Needs macOS 11 or later. The reader switches on
-`GCController.shouldMonitorBackgroundEvents` (macOS 11.3), because a terminal
-program is never the frontmost app and would otherwise read every controller
-at rest.
+Needs macOS 11 or later.
 
-GameController.framework finds controllers through the main run loop. A
-command-line program that never runs one may be shown no controllers at all.
-This is unverified: run the probe with a controller attached to find out.
+GameController.framework lists controllers only to a program whose main
+thread runs a run loop. Measured on macOS 27.2 with a DualSense: a program
+that runs the main run loop is shown the pad, and one that does not, or that
+runs a loop on another thread, is shown none. A Go terminal program is the
+second kind, so for it the framework path reports nothing. That is why the
+pads below have drivers of their own, which read the pad over HID and need
+no run loop. In a program that does run a main run loop, the framework path
+works, and the reader switches on
+`GCController.shouldMonitorBackgroundEvents` (macOS 11.3) so input arrives
+while the program is not frontmost.
+
+### DualSense (macOS, Bluetooth and USB)
+
+Read over HID by a built-in driver: no run loop, nothing to install, no
+permission asked for.
+
+- The pad reports in one of two forms, depending on what else on the machine
+  has spoken to it; the driver reads both and uses whichever arrived last.
+- Cross is `ButtonSouth` and Circle is `ButtonEast`. The triggers are
+  analogue, and count as pressed past half travel.
+- The PlayStation button, the touchpad and the motion sensors are not
+  reported.
 
 ### Switch 2 Pro Controller (macOS, USB)
 

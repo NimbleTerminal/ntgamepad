@@ -14,7 +14,10 @@ import (
 	"github.com/go-webgpu/goffi/types"
 )
 
-// macOS driver for the Switch 2 Pro Controller (see switch2.go), without cgo.
+// macOS driver for the pads this package reads over HID itself, without cgo:
+// the Switch 2 Pro Controller (see switch2.go), which the system does not
+// recognise, and the DualSense (see dualsense.go), which the system shows
+// only to programs that run a main run loop.
 //
 // Two things run apart:
 //
@@ -41,29 +44,61 @@ func (f *cfn) call(ret unsafe.Pointer, args ...unsafe.Pointer) {
 }
 
 const (
-	switch2SlotKind = 2 // slotKey.kind for this driver
+	// slotKey.kind for the pads this driver reads over HID.
+	switch2SlotKind   = 2
+	dualSenseSlotKind = 3
 	// HID usage pages and usages of the elements a poll reads.
 	hidPageDesktop = 0x01
 	hidPageButton  = 0x09
-	hidUsageX      = 0x30
-	hidUsageY      = 0x31
-	hidUsageRx     = 0x33
+	hidUsageX      = 0x30 // then Y, Z, Rx, Ry, Rz in order
 	hidUsageRz     = 0x35
+	hidUsageHat    = 0x39
+)
+
+// Indices into sw2Pad.axis: the desktop usages X to Rz, in usage order.
+const (
+	axisX = iota
+	axisY
+	axisZ
+	axisRx
+	axisRy
+	axisRz
+	axisCount
+)
+
+// hidKind is one kind of pad this driver reads over HID.
+type hidKind struct {
+	vendor, product int64
+	slotKind        uint8
+	// usb marks a pad found and started through its USB command interface
+	// (the Switch 2 pad); the others are found as HID devices and need no
+	// starting.
+	usb bool
+}
+
+var (
+	kindSwitch2   = &hidKind{vendor: switch2VendorID, product: switch2ProductID, slotKind: switch2SlotKind, usb: true}
+	kindDualSense = &hidKind{vendor: dualSenseVendorID, product: dualSenseProductID, slotKind: dualSenseSlotKind}
 )
 
 // sw2Pad is one connected pad. The goroutine builds it and never changes it
 // afterwards, except to free it once dead is set.
 type sw2Pad struct {
+	kind     *hidKind
 	location uint64
 	slot     int
-	cal      switch2Calibration
+	cal      switch2Calibration // the Switch 2 pad's sticks
 	// Retained: the HID manager, the set of devices it matched (which keeps
 	// dev alive) and dev's element array (which keeps the elements alive).
 	manager, devices, elements uintptr
 	dev                        uintptr
-	buttons                    [switch2ButtonCount]uintptr
-	axes                       [4]uintptr // left X, left Y, right X, right Y
-	dead                       bool       // set by a poll that failed; guarded by sw2Driver.mu
+	buttons                    [switch2ButtonCount]uintptr // by button usage, from 1
+	axis                       [axisCount]uintptr
+	hat                        uintptr
+	// enhanced is the element holding the DualSense's enhanced report, when
+	// the device has one.
+	enhanced uintptr
+	dead     bool // set by a poll that failed; guarded by sw2Driver.mu
 }
 
 type sw2Driver struct {
@@ -80,7 +115,8 @@ type sw2Driver struct {
 	hidManagerCreate, hidManagerSetDeviceMatching, hidManagerOpen, hidManagerClose   *cfn
 	hidManagerCopyDevices, hidDeviceGetProperty, hidDeviceCopyMatchingElements       *cfn
 	hidElementGetUsagePage, hidElementGetUsage, hidDeviceGetValue                    *cfn
-	hidValueGetIntegerValue                                                          *cfn
+	hidValueGetIntegerValue, hidValueGetTimeStamp, hidValueGetLength                 *cfn
+	hidValueGetBytePtr, hidElementGetReportID, hidElementGetType                     *cfn
 
 	// objc_msgSend, by the shape of the message.
 	msg       *cfn // id msg(id, SEL)
@@ -168,6 +204,11 @@ func (d *sw2Driver) load() bool {
 	d.hidElementGetUsage = fn(iokit, "IOHIDElementGetUsage", u32, ptr)
 	d.hidDeviceGetValue = fn(iokit, "IOHIDDeviceGetValue", i32, ptr, ptr, ptr)
 	d.hidValueGetIntegerValue = fn(iokit, "IOHIDValueGetIntegerValue", i64, ptr)
+	d.hidValueGetTimeStamp = fn(iokit, "IOHIDValueGetTimeStamp", u64, ptr)
+	d.hidValueGetLength = fn(iokit, "IOHIDValueGetLength", i64, ptr)
+	d.hidValueGetBytePtr = fn(iokit, "IOHIDValueGetBytePtr", ptr, ptr)
+	d.hidElementGetReportID = fn(iokit, "IOHIDElementGetReportID", u32, ptr)
+	d.hidElementGetType = fn(iokit, "IOHIDElementGetType", u32, ptr)
 
 	d.msg = fn(nil, "", ptr, ptr, ptr)
 	d.msgObj = fn(nil, "", ptr, ptr, ptr, ptr)
@@ -506,8 +547,9 @@ func (d *sw2Driver) handshake(service uint32, slot int) (switch2Calibration, boo
 	return cal, true
 }
 
-// openHID opens the HID device of the pad at a USB location and finds the
-// elements a poll reads. On success the pad owns the retained objects.
+// openHID opens the pad's HID device, matched by its kind and its location,
+// and finds the elements a poll reads. On success the pad owns the retained
+// objects.
 func (d *sw2Driver) openHID(p *sw2Pad) bool {
 	var alloc uintptr
 	var opts uint32
@@ -524,8 +566,8 @@ func (d *sw2Driver) openHID(p *sw2Pad) bool {
 		cmd := d.selSetObject
 		d.msgSet.call(nil, unsafe.Pointer(&dict), unsafe.Pointer(&cmd), unsafe.Pointer(&num), unsafe.Pointer(&k))
 	}
-	set("VendorID", switch2VendorID)
-	set("ProductID", switch2ProductID)
+	set("VendorID", p.kind.vendor)
+	set("ProductID", p.kind.product)
 	set("LocationID", int64(p.location))
 	d.hidManagerSetDeviceMatching.call(nil, unsafe.Pointer(&p.manager), unsafe.Pointer(&dict))
 	var kr uint64
@@ -546,40 +588,56 @@ func (d *sw2Driver) openHID(p *sw2Pad) bool {
 	count := uint64(d.send(p.elements, d.selCount))
 	for i := range count {
 		el := d.sendU64(p.elements, d.selObjectAtIdx, i)
-		var page, usage uint64
+		var page, usage, kind, report uint64
+		d.hidElementGetType.call(unsafe.Pointer(&kind), unsafe.Pointer(&el))
+		if t := low32(&kind); t < 1 || t > 3 {
+			continue // not an input element
+		}
 		d.hidElementGetUsagePage.call(unsafe.Pointer(&page), unsafe.Pointer(&el))
 		d.hidElementGetUsage.call(unsafe.Pointer(&usage), unsafe.Pointer(&el))
+		d.hidElementGetReportID.call(unsafe.Pointer(&report), unsafe.Pointer(&el))
 		switch u := low32(&usage); low32(&page) {
 		case hidPageButton:
-			if u >= 1 && int(u) <= len(p.buttons) {
+			if u >= 1 && int(u) <= len(p.buttons) && p.buttons[u-1] == 0 {
 				p.buttons[u-1] = el
 			}
 		case hidPageDesktop:
-			switch u {
-			case hidUsageX:
-				p.axes[0] = el
-			case hidUsageY:
-				p.axes[1] = el
-			case hidUsageRx:
-				p.axes[2] = el
-			case hidUsageRz:
-				p.axes[3] = el
+			switch {
+			case u >= hidUsageX && u <= hidUsageRz && p.axis[u-hidUsageX] == 0:
+				p.axis[u-hidUsageX] = el
+			case u == hidUsageHat && p.hat == 0:
+				p.hat = el
+			}
+		default:
+			if p.kind == kindDualSense && low32(&report) == dualSenseEnhancedReport && p.enhanced == 0 {
+				p.enhanced = el
 			}
 		}
 	}
-	for _, el := range p.buttons {
-		if el == 0 {
-			d.closeHID(p)
-			return false
-		}
-	}
-	for _, el := range p.axes {
-		if el == 0 {
-			d.closeHID(p)
-			return false
-		}
+	if !p.complete() {
+		d.closeHID(p)
+		return false
 	}
 	return true
+}
+
+// complete reports whether openHID found the elements the pad's kind needs.
+func (p *sw2Pad) complete() bool {
+	have := func(els ...uintptr) bool {
+		for _, el := range els {
+			if el == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	switch p.kind {
+	case kindSwitch2:
+		return have(p.buttons[:]...) && have(p.axis[axisX], p.axis[axisY], p.axis[axisRx], p.axis[axisRz])
+	case kindDualSense:
+		return have(p.buttons[:dualSenseButtonCount]...) && have(p.axis[:]...) && have(p.hat)
+	}
+	return false
 }
 
 // closeHID frees what openHID retained.
@@ -595,26 +653,33 @@ func (d *sw2Driver) closeHID(p *sw2Pad) {
 	p.manager, p.devices, p.elements, p.dev = 0, 0, 0, 0
 }
 
-// value is an element's current integer value, and whether the device
-// answered.
-func (d *sw2Driver) value(p *sw2Pad, el uintptr) (int64, bool) {
+// valueRef is an element's current value object, owned by the system, and
+// whether the device answered.
+func (d *sw2Driver) valueRef(p *sw2Pad, el uintptr) (uintptr, bool) {
 	var val uintptr
 	valp := unsafe.Pointer(&val)
 	var kr uint64
 	d.hidDeviceGetValue.call(unsafe.Pointer(&kr), unsafe.Pointer(&p.dev), unsafe.Pointer(&el), unsafe.Pointer(&valp))
-	if low32(&kr) != 0 || val == 0 {
-		return 0, false
-	}
-	var n int64
-	d.hidValueGetIntegerValue.call(unsafe.Pointer(&n), unsafe.Pointer(&val))
-	return n, true
+	return val, low32(&kr) == 0 && val != 0
 }
 
-// read is one pad's input, and whether the pad is still there.
-func (d *sw2Driver) read(p *sw2Pad) (switch2Input, bool) {
+// value is an element's current integer value, when it was last reported
+// (in the system's clock ticks), and whether the device answered.
+func (d *sw2Driver) value(p *sw2Pad, el uintptr) (v int64, stamp uint64, ok bool) {
+	val, ok := d.valueRef(p, el)
+	if !ok {
+		return 0, 0, false
+	}
+	d.hidValueGetIntegerValue.call(unsafe.Pointer(&v), unsafe.Pointer(&val))
+	d.hidValueGetTimeStamp.call(unsafe.Pointer(&stamp), unsafe.Pointer(&val))
+	return v, stamp, true
+}
+
+// readSwitch2 is a Switch 2 pad's input, and whether the pad is still there.
+func (d *sw2Driver) readSwitch2(p *sw2Pad) (switch2Input, bool) {
 	var in switch2Input
 	for i, el := range p.buttons {
-		v, ok := d.value(p, el)
+		v, _, ok := d.value(p, el)
 		if !ok {
 			return in, false
 		}
@@ -623,14 +688,65 @@ func (d *sw2Driver) read(p *sw2Pad) (switch2Input, bool) {
 		}
 	}
 	var axes [4]uint16
-	for i, el := range p.axes {
-		v, ok := d.value(p, el)
+	for i, a := range [4]int{axisX, axisY, axisRx, axisRz} {
+		v, _, ok := d.value(p, p.axis[a])
 		if !ok {
 			return in, false
 		}
 		axes[i] = uint16(max(0, min(0xfff, v)))
 	}
 	in.lx, in.ly, in.rx, in.ry = axes[0], axes[1], axes[2], axes[3]
+	return in, true
+}
+
+// readDualSense is a DualSense's input, and whether the pad is still there.
+// It reads the pad's plain report and, when the device has one, its enhanced
+// report, and answers from whichever was reported last.
+func (d *sw2Driver) readDualSense(p *sw2Pad) (dualSenseInput, bool) {
+	var in dualSenseInput
+	var newest uint64
+	byte8 := func(v int64) uint8 { return uint8(max(0, min(255, v))) }
+	for i, el := range p.buttons[:dualSenseButtonCount] {
+		v, stamp, ok := d.value(p, el)
+		if !ok {
+			return in, false
+		}
+		if v != 0 {
+			in.buttons |= 1 << i
+		}
+		newest = max(newest, stamp)
+	}
+	var axes [axisCount]uint8
+	for i, el := range p.axis {
+		v, stamp, ok := d.value(p, el)
+		if !ok {
+			return in, false
+		}
+		axes[i], newest = byte8(v), max(newest, stamp)
+	}
+	in.lx, in.ly, in.rx, in.ry = axes[axisX], axes[axisY], axes[axisZ], axes[axisRz]
+	in.l2, in.r2 = axes[axisRx], axes[axisRy]
+	hat, stamp, ok := d.value(p, p.hat)
+	if !ok {
+		return in, false
+	}
+	in.hat, newest = byte8(hat), max(newest, stamp)
+
+	if p.enhanced != 0 {
+		if val, ok := d.valueRef(p, p.enhanced); ok {
+			var at uint64
+			var n int64
+			var bytes unsafe.Pointer
+			d.hidValueGetTimeStamp.call(unsafe.Pointer(&at), unsafe.Pointer(&val))
+			d.hidValueGetLength.call(unsafe.Pointer(&n), unsafe.Pointer(&val))
+			d.hidValueGetBytePtr.call(unsafe.Pointer(&bytes), unsafe.Pointer(&val))
+			if at >= newest && bytes != nil && n > 0 && n <= 4096 {
+				if e, ok := dualSenseParseEnhanced(unsafe.Slice((*byte)(bytes), int(n))); ok {
+					return e, true
+				}
+			}
+		}
+	}
 	return in, true
 }
 
@@ -647,14 +763,40 @@ func (d *sw2Driver) poll(dst []State) []State {
 		if p.dead {
 			continue
 		}
-		in, ok := d.read(p)
-		if !ok {
-			p.dead = true
-			continue
+		switch p.kind {
+		case kindSwitch2:
+			in, ok := d.readSwitch2(p)
+			if !ok {
+				p.dead = true
+				continue
+			}
+			dst = append(dst, switch2State(p.slot, in, p.cal))
+		case kindDualSense:
+			in, ok := d.readDualSense(p)
+			if !ok {
+				p.dead = true
+				continue
+			}
+			dst = append(dst, dualSenseState(p.slot, in))
 		}
-		dst = append(dst, switch2State(p.slot, in, p.cal))
 	}
 	return dst
+}
+
+// live reports whether a pad of the kind is being read. The system's own
+// controller framework may list the same pad; the reader shows it once.
+func (d *sw2Driver) live(kind *hidKind) bool {
+	if !d.ok {
+		return false
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, p := range d.pads {
+		if p.kind == kind && !p.dead {
+			return true
+		}
+	}
+	return false
 }
 
 // run is the background goroutine: once a second it frees pads that died
@@ -686,35 +828,86 @@ func (d *sw2Driver) reap() {
 	d.mu.Unlock()
 	for _, p := range dead {
 		d.closeHID(p)
-		darwinSlots.release(slotKey{kind: switch2SlotKind, id: p.location})
+		darwinSlots.release(slotKey{kind: p.kind.slotKind, id: p.location})
 	}
 }
 
 // discover brings up every attached pad that is not already live.
 func (d *sw2Driver) discover() {
-	found := d.findUSB()
-	for _, u := range found {
-		d.bringUp(u)
+	for _, u := range d.findUSB() {
+		d.bringUp(kindSwitch2, u.location, u.service)
 		d.objectRelease(u.service)
+	}
+	for _, location := range d.findHID(kindDualSense) {
+		d.bringUp(kindDualSense, location, 0)
 	}
 }
 
-func (d *sw2Driver) bringUp(u usbPad) {
+// findHID lists the locations of the attached HID devices of a kind.
+func (d *sw2Driver) findHID(kind *hidKind) []uint64 {
+	name := append([]byte("IOHIDDevice"), 0)
+	np := unsafe.Pointer(&name[0])
+	var matching uintptr
+	d.ioServiceMatching.call(unsafe.Pointer(&matching), unsafe.Pointer(&np))
+	runtime.KeepAlive(name)
+	if matching == 0 {
+		return nil
+	}
+	var port uint32
+	var iter uint32
+	iterp := unsafe.Pointer(&iter)
+	var kr uint64
+	// The call consumes the matching dictionary.
+	d.ioServiceGetMatchingServices.call(unsafe.Pointer(&kr), unsafe.Pointer(&port), unsafe.Pointer(&matching), unsafe.Pointer(&iterp))
+	if low32(&kr) != 0 || iter == 0 {
+		return nil
+	}
+	defer d.objectRelease(iter)
+	var out []uint64
+	for {
+		var next uint64
+		d.ioIteratorNext.call(unsafe.Pointer(&next), unsafe.Pointer(&iter))
+		svc := low32(&next)
+		if svc == 0 {
+			return out
+		}
+		vendor, _ := d.registryNumber(svc, "VendorID")
+		product, _ := d.registryNumber(svc, "ProductID")
+		location, ok := d.registryNumber(svc, "LocationID")
+		d.objectRelease(svc)
+		if vendor != kind.vendor || product != kind.product || !ok {
+			continue
+		}
+		seen := false
+		for _, l := range out {
+			seen = seen || l == uint64(location)
+		}
+		if !seen {
+			out = append(out, uint64(location))
+		}
+	}
+}
+
+// bringUp makes the pad of a kind at a location live, unless it already is.
+// service is the Switch 2 pad's command interface, to start it through.
+func (d *sw2Driver) bringUp(kind *hidKind, location uint64, service uint32) {
 	d.mu.Lock()
 	for _, p := range d.pads {
-		if p.location == u.location {
+		if p.kind == kind && p.location == location {
 			d.mu.Unlock()
 			return
 		}
 	}
 	d.mu.Unlock()
-	key := slotKey{kind: switch2SlotKind, id: u.location}
+	key := slotKey{kind: kind.slotKind, id: location}
 	slot, ok := darwinSlots.claim(key)
 	if !ok {
 		return
 	}
-	p := &sw2Pad{location: u.location, slot: slot}
-	p.cal, ok = d.handshake(u.service, slot)
+	p := &sw2Pad{kind: kind, location: location, slot: slot}
+	if kind.usb {
+		p.cal, ok = d.handshake(service, slot)
+	}
 	if !ok || !d.openHID(p) {
 		// Another program may hold the interface, or the pad left; try
 		// again on the next pass.

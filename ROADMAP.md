@@ -32,9 +32,13 @@ move to Done with their commit. A prompt an item points to is in
 
 ## Platforms
 
-- [ ] **macOS, GameController.framework path**: never tried with a controller
-  the framework supports. Open question: whether a terminal program with no
-  run loop is shown any controllers.
+- [ ] **macOS, the rest of the common pads**: GameController.framework shows
+  controllers only to programs with a main run loop, so a terminal program
+  gets none from it. The Switch 2 Pro Controller and the DualSense have HID
+  drivers of their own; the DualShock 4, Xbox controllers and the original
+  Switch Pro Controller need the same, each checked on hardware.
+- [ ] **Check every DualSense button, and USB.** Found and read at rest over
+  Bluetooth in its enhanced mode; the plain report and USB are untried.
 - [ ] **Linux**: reads the legacy joystick interface with `xpad` numbering,
   untested on hardware. Consider evdev, which reports what each button is.
 - [ ] **Windows**: reports no controllers. XInput can be called without cgo.
