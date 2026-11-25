@@ -52,6 +52,8 @@ type model struct {
 
 	width, height int
 	browser       []string
+	// advice is ntgamepad.Notes: what limits the controllers shown here.
+	advice []string
 }
 
 func newModel(pad ntgamepad.Reader) *model {
@@ -115,6 +117,7 @@ func (m *model) poll() {
 		}
 	}
 	m.browser = browserPads(m.pads)
+	m.advice = ntgamepad.Notes()
 }
 
 // redraw sends the picture a new frame when the controller shown has changed
@@ -141,10 +144,11 @@ func (m *model) bodyRows() int {
 }
 
 func (m *model) noteRows() int {
-	if !inBrowser {
-		return 1
+	rows := 1 + len(m.advice)
+	if inBrowser {
+		rows += max(1, len(m.browser))
 	}
-	return 1 + max(1, len(m.browser))
+	return rows
 }
 
 func (m *model) layout() tea.Cmd {
@@ -224,6 +228,9 @@ func (m *model) readout() string {
 
 func (m *model) notes() string {
 	lines := []string{m.readout()}
+	for _, a := range m.advice {
+		lines = append(lines, styleNote.Render("note: "+a))
+	}
 	if inBrowser {
 		if len(m.browser) == 0 {
 			lines = append(lines, styleDim.Render("the browser reports no controllers"))

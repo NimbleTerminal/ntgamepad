@@ -4,7 +4,14 @@
 
 package ntgamepad
 
-import "syscall/js"
+import (
+	"sync/atomic"
+	"syscall/js"
+)
+
+// webListed and webSkipped are how many controllers the browser showed the
+// page at the last poll, and how many of those the reader skipped.
+var webListed, webSkipped atomic.Int32
 
 // webReader reads navigator.getGamepads(). A browser shows a page no
 // controllers until the user presses a button on one. Controllers whose
@@ -39,11 +46,14 @@ func (r *webReader) PollAll(dst []State) []State {
 	if !pads.Truthy() {
 		return dst
 	}
+	var listed, skipped int32
+	defer func() { webListed.Store(listed); webSkipped.Store(skipped) }()
 	for i := 0; i < pads.Length() && len(dst) < MaxPads; i++ {
 		gp := pads.Index(i)
 		if !gp.Truthy() || !gp.Get("connected").Bool() {
 			continue
 		}
+		listed++
 		r.axes, r.down, r.vals = r.axes[:0], r.down[:0], r.vals[:0]
 		if axes := gp.Get("axes"); axes.Truthy() {
 			for j := 0; j < axes.Length() && j < 8; j++ {
@@ -80,6 +90,8 @@ func (r *webReader) PollAll(dst []State) []State {
 			dst = append(dst, standardState(index, name, r.axes, r.down, r.vals))
 		case isSwitch2Web(name, len(r.axes), len(r.down)):
 			dst = append(dst, switch2WebState(index, r.axes, r.down))
+		default:
+			skipped++
 		}
 	}
 	return dst
@@ -91,4 +103,9 @@ func number(v js.Value) float64 {
 		return 0
 	}
 	return v.Float()
+}
+
+// platformNotes is what the browser has to say to the developer.
+func platformNotes() []string {
+	return webNotes(int(webListed.Load()), int(webSkipped.Load()))
 }

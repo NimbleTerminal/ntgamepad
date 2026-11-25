@@ -60,6 +60,7 @@ func main() {
 	seen := 0
 	var slowest time.Duration
 	polls := 0
+	notes := ""
 	for {
 		select {
 		case <-stop:
@@ -76,6 +77,15 @@ func main() {
 			slowest = d
 		}
 		polls++
+
+		if polls%*rate == 0 { // once a second
+			if now := strings.Join(ntgamepad.Notes(), "\n"); now != notes {
+				notes = now
+				for _, n := range ntgamepad.Notes() {
+					fmt.Println("note:", n)
+				}
+			}
+		}
 
 		present := map[int]bool{}
 		for _, p := range pads {

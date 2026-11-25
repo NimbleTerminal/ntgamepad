@@ -7,8 +7,12 @@ package ntgamepad
 import (
 	"errors"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 )
+
+// linuxDenied is set when a joystick device is there but may not be opened.
+var linuxDenied atomic.Bool
 
 // linuxReader reads /dev/input/js0 through js3 without blocking. Slot i is
 // jsI: a device that is unplugged frees its slot, and one plugged in later is
@@ -63,6 +67,9 @@ func (r *linuxReader) PollAll(dst []State) []State {
 			path := "/dev/input/js" + strconv.Itoa(i)
 			fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 			if err != nil {
+				if errors.Is(err, syscall.EACCES) {
+					linuxDenied.Store(true)
+				}
 				continue
 			}
 			*p = linuxPad{fd: fd, open: true, name: path}
@@ -96,4 +103,12 @@ func (p *linuxPad) drain() bool {
 			return false
 		}
 	}
+}
+
+// platformNotes is what Linux has to say to the developer.
+func platformNotes() []string {
+	if linuxDenied.Load() {
+		return []string{noteLinuxDenied}
+	}
+	return nil
 }

@@ -172,6 +172,30 @@ Uses the kernel's joystick interface with the numbering of the `xpad` driver
 other drivers number their buttons and axes differently and will read wrong.
 The user needs read access to `/dev/input/js*`.
 
+## When a controller does not show up
+
+`ntgamepad.Notes()` returns plain sentences about anything that limits which
+controllers the program is shown, on the platform it is running on and given
+how it is polling. It is empty when there is nothing to say.
+
+```go
+for _, note := range ntgamepad.Notes() {
+	log.Println("ntgamepad:", note)
+}
+```
+
+It is meant for the developer, in a debug view or a log, not for the player.
+What it covers:
+
+| Platform | It says so when |
+| --- | --- |
+| macOS | polls come from a goroutine other than the main one, so only the pads with a built-in driver are visible; the system framework could not be loaded; the built-in drivers are switched off |
+| Browser | no controller is listed yet (a button press is needed); the browser lists a controller the package skipped |
+| Linux | a joystick device is there but may not be opened |
+| Elsewhere | the platform has no controller support |
+
+The probe and the controller viewer both print these notes.
+
 ## Checking a controller
 
 ```sh

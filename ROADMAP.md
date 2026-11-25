@@ -48,3 +48,5 @@ move to Done with their commit. A prompt an item points to is in
 - [x] **First release (v0.1.0)**: the library, the Switch 2 Pro Controller
   driver, the controller viewer, fuzz targets and CI.
 - [x] **Browser demo published** at <https://nimbleterminal.github.io/ntgamepad/>.
+- [x] **v0.2.0**: every controller macOS supports in a terminal program,
+  through the system framework; a DualSense HID driver; `Notes()`.

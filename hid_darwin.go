@@ -56,7 +56,7 @@ const (
 	hidUsageHat    = 0x39
 )
 
-// Indices into sw2Pad.axis: the desktop usages X to Rz, in usage order.
+// Indices into hidPad.axis: the desktop usages X to Rz, in usage order.
 const (
 	axisX = iota
 	axisY
@@ -82,9 +82,9 @@ var (
 	kindDualSense = &hidKind{vendor: dualSenseVendorID, product: dualSenseProductID, slotKind: dualSenseSlotKind}
 )
 
-// sw2Pad is one connected pad. The goroutine builds it and never changes it
+// hidPad is one connected pad. The goroutine builds it and never changes it
 // afterwards, except to free it once dead is set.
-type sw2Pad struct {
+type hidPad struct {
 	kind     *hidKind
 	location uint64
 	slot     int
@@ -99,17 +99,17 @@ type sw2Pad struct {
 	// enhanced is the element holding the DualSense's enhanced report, when
 	// the device has one.
 	enhanced uintptr
-	dead     bool // set by a poll that failed; guarded by sw2Driver.mu
+	dead     bool // set by a poll that failed; guarded by hidDriver.mu
 }
 
-type sw2Driver struct {
+type hidDriver struct {
 	start sync.Once
 	ok    bool
 
 	// mu guards pads and each pad's dead flag. Polls hold it briefly; the
 	// goroutine holds it only to publish or remove a pad, never during I/O.
 	mu   sync.Mutex
-	pads []*sw2Pad
+	pads []*hidPad
 	// seenHID is the DualSense locations the goroutine's last pass found;
 	// only the goroutine uses it.
 	seenHID []uint64
@@ -142,11 +142,11 @@ type sw2Driver struct {
 	selInitService, selConfigDescriptor, selCopyPipe, selSendIO, selDestroy    objcSEL
 }
 
-var sw2 sw2Driver
+var hid hidDriver
 
 // begin starts the driver once: it resolves everything it calls and starts
 // the goroutine. It is a no-op when the frameworks cannot be loaded.
-func (d *sw2Driver) begin() {
+func (d *hidDriver) begin() {
 	d.start.Do(func() {
 		bridge.mu.Lock()
 		loaded := bridge.load()
@@ -159,7 +159,7 @@ func (d *sw2Driver) begin() {
 	})
 }
 
-func (d *sw2Driver) load() bool {
+func (d *hidDriver) load() bool {
 	iokit, err := ffi.LoadLibrary("/System/Library/Frameworks/IOKit.framework/IOKit")
 	if err != nil {
 		return false
@@ -261,7 +261,7 @@ func (d *sw2Driver) load() bool {
 
 // Message helpers. Each keeps its arguments in locals for the call.
 
-func (d *sw2Driver) send(self uintptr, cmd objcSEL) uintptr {
+func (d *hidDriver) send(self uintptr, cmd objcSEL) uintptr {
 	if self == 0 {
 		return 0
 	}
@@ -271,7 +271,7 @@ func (d *sw2Driver) send(self uintptr, cmd objcSEL) uintptr {
 }
 
 // sendPtr is send for a message that returns a C pointer, not an object.
-func (d *sw2Driver) sendPtr(self uintptr, cmd objcSEL) unsafe.Pointer {
+func (d *hidDriver) sendPtr(self uintptr, cmd objcSEL) unsafe.Pointer {
 	if self == 0 {
 		return nil
 	}
@@ -280,7 +280,7 @@ func (d *sw2Driver) sendPtr(self uintptr, cmd objcSEL) unsafe.Pointer {
 	return res
 }
 
-func (d *sw2Driver) sendObj(self uintptr, cmd objcSEL, arg uintptr) uintptr {
+func (d *hidDriver) sendObj(self uintptr, cmd objcSEL, arg uintptr) uintptr {
 	if self == 0 {
 		return 0
 	}
@@ -289,7 +289,7 @@ func (d *sw2Driver) sendObj(self uintptr, cmd objcSEL, arg uintptr) uintptr {
 	return res
 }
 
-func (d *sw2Driver) sendU64(self uintptr, cmd objcSEL, arg uint64) uintptr {
+func (d *hidDriver) sendU64(self uintptr, cmd objcSEL, arg uint64) uintptr {
 	if self == 0 {
 		return 0
 	}
@@ -298,14 +298,14 @@ func (d *sw2Driver) sendU64(self uintptr, cmd objcSEL, arg uint64) uintptr {
 	return res
 }
 
-func (d *sw2Driver) sendVoid(self uintptr, cmd objcSEL) {
+func (d *hidDriver) sendVoid(self uintptr, cmd objcSEL) {
 	if self != 0 {
 		d.msgVoid.call(nil, unsafe.Pointer(&self), unsafe.Pointer(&cmd))
 	}
 }
 
 // longLong is [obj longLongValue], for an NSNumber; zero for nil.
-func (d *sw2Driver) longLong(obj uintptr) int64 {
+func (d *hidDriver) longLong(obj uintptr) int64 {
 	if obj == 0 {
 		return 0
 	}
@@ -316,7 +316,7 @@ func (d *sw2Driver) longLong(obj uintptr) int64 {
 }
 
 // str is an autoreleased NSString, which is also a CFString.
-func (d *sw2Driver) str(s string) uintptr {
+func (d *hidDriver) str(s string) uintptr {
 	buf := append([]byte(s), 0)
 	p := unsafe.Pointer(&buf[0])
 	cls, cmd := uintptr(d.clsString), d.selStringUTF8
@@ -326,7 +326,7 @@ func (d *sw2Driver) str(s string) uintptr {
 	return res
 }
 
-func (d *sw2Driver) release(cf uintptr) {
+func (d *hidDriver) release(cf uintptr) {
 	if cf != 0 {
 		d.cfRelease.call(nil, unsafe.Pointer(&cf))
 	}
@@ -337,7 +337,7 @@ func low32(buf *uint64) uint32 { return uint32(*buf) }
 
 // registryNumber is an integer property of an I/O Registry entry, and
 // whether it is there.
-func (d *sw2Driver) registryNumber(entry uint32, key string) (int64, bool) {
+func (d *hidDriver) registryNumber(entry uint32, key string) (int64, bool) {
 	k := d.str(key)
 	var alloc uintptr
 	var opts uint32
@@ -357,7 +357,7 @@ type usbPad struct {
 }
 
 // findUSB lists the command interface of every attached pad.
-func (d *sw2Driver) findUSB() []usbPad {
+func (d *hidDriver) findUSB() []usbPad {
 	name := append([]byte("IOUSBHostInterface"), 0)
 	np := unsafe.Pointer(&name[0])
 	var matching uintptr
@@ -396,7 +396,7 @@ func (d *sw2Driver) findUSB() []usbPad {
 	}
 }
 
-func (d *sw2Driver) objectRelease(obj uint32) {
+func (d *hidDriver) objectRelease(obj uint32) {
 	if obj != 0 {
 		var kr uint64
 		d.ioObjectRelease.call(unsafe.Pointer(&kr), unsafe.Pointer(&obj))
@@ -405,13 +405,13 @@ func (d *sw2Driver) objectRelease(obj uint32) {
 
 // usbLink is an open command interface.
 type usbLink struct {
-	d              *sw2Driver
+	d              *hidDriver
 	iface, in, out uintptr
 }
 
 // openUSB opens a pad's command interface and its two bulk pipes. It fails
 // when another program holds the interface.
-func (d *sw2Driver) openUSB(service uint32) (*usbLink, bool) {
+func (d *hidDriver) openUSB(service uint32) (*usbLink, bool) {
 	cls, alloc := uintptr(d.clsInterface), d.selAlloc
 	var obj uintptr
 	d.msg.call(unsafe.Pointer(&obj), unsafe.Pointer(&cls), unsafe.Pointer(&alloc))
@@ -532,7 +532,7 @@ func (l *usbLink) flash(address uint32) []byte {
 }
 
 // handshake reads the calibration and starts the pad's input reports.
-func (d *sw2Driver) handshake(service uint32, slot int) (switch2Calibration, bool) {
+func (d *hidDriver) handshake(service uint32, slot int) (switch2Calibration, bool) {
 	l, ok := d.openUSB(service)
 	if !ok {
 		return switch2Calibration{}, false
@@ -554,7 +554,7 @@ func (d *sw2Driver) handshake(service uint32, slot int) (switch2Calibration, boo
 // openHID opens the pad's HID device, matched by its kind and its location,
 // and finds the elements a poll reads. On success the pad owns the retained
 // objects.
-func (d *sw2Driver) openHID(p *sw2Pad) bool {
+func (d *hidDriver) openHID(p *hidPad) bool {
 	var alloc uintptr
 	var opts uint32
 	d.hidManagerCreate.call(unsafe.Pointer(&p.manager), unsafe.Pointer(&alloc), unsafe.Pointer(&opts))
@@ -626,7 +626,7 @@ func (d *sw2Driver) openHID(p *sw2Pad) bool {
 }
 
 // complete reports whether openHID found the elements the pad's kind needs.
-func (p *sw2Pad) complete() bool {
+func (p *hidPad) complete() bool {
 	have := func(els ...uintptr) bool {
 		for _, el := range els {
 			if el == 0 {
@@ -645,7 +645,7 @@ func (p *sw2Pad) complete() bool {
 }
 
 // closeHID frees what openHID retained.
-func (d *sw2Driver) closeHID(p *sw2Pad) {
+func (d *hidDriver) closeHID(p *hidPad) {
 	if p.manager != 0 {
 		var opts uint32
 		var kr uint64
@@ -659,7 +659,7 @@ func (d *sw2Driver) closeHID(p *sw2Pad) {
 
 // valueRef is an element's current value object, owned by the system, and
 // whether the device answered.
-func (d *sw2Driver) valueRef(p *sw2Pad, el uintptr) (uintptr, bool) {
+func (d *hidDriver) valueRef(p *hidPad, el uintptr) (uintptr, bool) {
 	var val uintptr
 	valp := unsafe.Pointer(&val)
 	var kr uint64
@@ -669,7 +669,7 @@ func (d *sw2Driver) valueRef(p *sw2Pad, el uintptr) (uintptr, bool) {
 
 // value is an element's current integer value, when it was last reported
 // (in the system's clock ticks), and whether the device answered.
-func (d *sw2Driver) value(p *sw2Pad, el uintptr) (v int64, stamp uint64, ok bool) {
+func (d *hidDriver) value(p *hidPad, el uintptr) (v int64, stamp uint64, ok bool) {
 	val, ok := d.valueRef(p, el)
 	if !ok {
 		return 0, 0, false
@@ -680,7 +680,7 @@ func (d *sw2Driver) value(p *sw2Pad, el uintptr) (v int64, stamp uint64, ok bool
 }
 
 // readSwitch2 is a Switch 2 pad's input, and whether the pad is still there.
-func (d *sw2Driver) readSwitch2(p *sw2Pad) (switch2Input, bool) {
+func (d *hidDriver) readSwitch2(p *hidPad) (switch2Input, bool) {
 	var in switch2Input
 	for i, el := range p.buttons {
 		v, _, ok := d.value(p, el)
@@ -706,7 +706,7 @@ func (d *sw2Driver) readSwitch2(p *sw2Pad) (switch2Input, bool) {
 // readDualSense is a DualSense's input, and whether the pad is still there.
 // It reads the pad's plain report and, when the device has one, its enhanced
 // report, and answers from whichever was reported last.
-func (d *sw2Driver) readDualSense(p *sw2Pad) (dualSenseInput, bool) {
+func (d *hidDriver) readDualSense(p *hidPad) (dualSenseInput, bool) {
 	var in dualSenseInput
 	var newest uint64
 	byte8 := func(v int64) uint8 { return uint8(max(0, min(255, v))) }
@@ -759,7 +759,7 @@ func (d *sw2Driver) readDualSense(p *sw2Pad) (dualSenseInput, bool) {
 // for the goroutine to free. When the system framework is listing the
 // DualSense to this program, the driver's own DualSense is let go, so the
 // pad is shown once.
-func (d *sw2Driver) poll(dst []State, frameworkHasDualSense bool) []State {
+func (d *hidDriver) poll(dst []State, frameworkHasDualSense bool) []State {
 	if !d.ok {
 		return dst
 	}
@@ -791,7 +791,7 @@ func (d *sw2Driver) poll(dst []State, frameworkHasDualSense bool) []State {
 
 // run is the background goroutine: once a second it frees pads that died
 // and brings up pads that appeared.
-func (d *sw2Driver) run() {
+func (d *hidDriver) run() {
 	runtime.LockOSThread()
 	for {
 		pool := bridge.pushPool()
@@ -803,9 +803,9 @@ func (d *sw2Driver) run() {
 }
 
 // reap frees the pads a poll found dead.
-func (d *sw2Driver) reap() {
+func (d *hidDriver) reap() {
 	d.mu.Lock()
-	var dead []*sw2Pad
+	var dead []*hidPad
 	live := d.pads[:0:0]
 	for _, p := range d.pads {
 		if p.dead {
@@ -823,7 +823,7 @@ func (d *sw2Driver) reap() {
 }
 
 // discover brings up every attached pad that is not already live.
-func (d *sw2Driver) discover() {
+func (d *hidDriver) discover() {
 	for _, u := range d.findUSB() {
 		d.bringUp(kindSwitch2, u.location, u.service)
 		d.objectRelease(u.service)
@@ -848,7 +848,7 @@ func (d *sw2Driver) discover() {
 }
 
 // findHID lists the locations of the attached HID devices of a kind.
-func (d *sw2Driver) findHID(kind *hidKind) []uint64 {
+func (d *hidDriver) findHID(kind *hidKind) []uint64 {
 	name := append([]byte("IOHIDDevice"), 0)
 	np := unsafe.Pointer(&name[0])
 	var matching uintptr
@@ -894,7 +894,7 @@ func (d *sw2Driver) findHID(kind *hidKind) []uint64 {
 
 // bringUp makes the pad of a kind at a location live, unless it already is.
 // service is the Switch 2 pad's command interface, to start it through.
-func (d *sw2Driver) bringUp(kind *hidKind, location uint64, service uint32) {
+func (d *hidDriver) bringUp(kind *hidKind, location uint64, service uint32) {
 	d.mu.Lock()
 	for _, p := range d.pads {
 		if p.kind == kind && p.location == location {
@@ -908,7 +908,7 @@ func (d *sw2Driver) bringUp(kind *hidKind, location uint64, service uint32) {
 	if !ok {
 		return
 	}
-	p := &sw2Pad{kind: kind, location: location, slot: slot}
+	p := &hidPad{kind: kind, location: location, slot: slot}
 	if kind.usb {
 		p.cal, ok = d.handshake(service, slot)
 	}

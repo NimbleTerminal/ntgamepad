@@ -5,6 +5,7 @@
 package ntgamepad
 
 import (
+	"os"
 	"runtime"
 	"syscall"
 	"testing"
@@ -67,4 +68,52 @@ func maxRSS(t *testing.T) int64 {
 		t.Fatalf("getrusage: %v", err)
 	}
 	return ru.Maxrss // bytes on darwin
+}
+
+// mainOnMainThread is whether the main goroutine was on the main thread when
+// the tests started; TestMain runs on the main goroutine.
+var mainOnMainThread, frameworkLoaded bool
+
+func TestMain(m *testing.M) {
+	bridge.mu.Lock()
+	if frameworkLoaded = bridge.load(); frameworkLoaded {
+		mainOnMainThread = bridge.onMainThread()
+	}
+	bridge.mu.Unlock()
+	os.Exit(m.Run())
+}
+
+// Importing the package keeps the main goroutine on the main thread, which
+// is what lets a poll from it run the main run loop; a test's own goroutine
+// is not on it.
+func TestDarwinMainGoroutineIsOnTheMainThread(t *testing.T) {
+	if !frameworkLoaded {
+		t.Skip("GameController.framework did not load")
+	}
+	if !mainOnMainThread {
+		t.Fatal("the main goroutine is not on the main thread")
+	}
+	bridge.mu.Lock()
+	here := bridge.onMainThread()
+	bridge.mu.Unlock()
+	if here {
+		t.Fatal("a test goroutine reports being on the main thread")
+	}
+}
+
+// A program that polls only from another goroutine is told so.
+func TestDarwinNotesSayWhenPollsAreOffTheMainGoroutine(t *testing.T) {
+	if !frameworkLoaded {
+		t.Skip("GameController.framework did not load")
+	}
+	r := Open()
+	defer r.Close()
+	_ = r.Poll()
+	found := false
+	for _, n := range Notes() {
+		found = found || n == noteMacOffMain
+	}
+	if !found {
+		t.Fatalf("notes = %q, want the off-main-goroutine note", Notes())
+	}
 }

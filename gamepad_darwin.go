@@ -35,7 +35,7 @@ import (
 // kept on the main thread, and a poll made from it lets the main run loop
 // handle what is waiting before asking for the controllers. A poll made from
 // another goroutine cannot do that, and is shown only what the HID drivers
-// read (switch2_darwin.go).
+// read (hid_darwin.go).
 func init() { runtime.LockOSThread() }
 
 type objcID uintptr
@@ -51,6 +51,9 @@ type gcBridge struct {
 	// mainPollAt is when a poll last ran on the main thread, in Unix
 	// nanoseconds: only then can the framework see controllers.
 	mainPollAt atomic.Int64
+	// polled is set once any poll has been made; hidOff when the built-in
+	// drivers were left out (NTGAMEPAD_HID=off).
+	polled, hidOff atomic.Bool
 	// slots keeps each controller's Index while it stays connected.
 	slots [MaxPads]gcSlot
 
@@ -401,7 +404,9 @@ func openPlatform() Reader {
 	// NTGAMEPAD_HID=off leaves the HID drivers out, to check what the
 	// system framework reports by itself.
 	if os.Getenv("NTGAMEPAD_HID") != "off" {
-		sw2.begin()
+		hid.begin()
+	} else {
+		bridge.hidOff.Store(true)
 	}
 	r := &darwinReader{}
 	_ = r.PollAll(nil)
@@ -423,6 +428,7 @@ func (r *darwinReader) PollAll(dst []State) []State {
 	b := &bridge
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.polled.Store(true)
 	if !b.load() {
 		return dst
 	}
@@ -446,7 +452,7 @@ func (r *darwinReader) PollAll(dst []State) []State {
 		}
 		dst = append(dst, b.read(i, slot))
 	}
-	dst = sw2.poll(dst, b.serves(dualSenseName))
+	dst = hid.poll(dst, b.serves(dualSenseName))
 	slices.SortFunc(dst, func(x, y State) int { return x.Index - y.Index })
 	return dst
 }
@@ -561,4 +567,14 @@ func (b *gcBridge) read(index int, slot *gcSlot) State {
 		}
 	}
 	return s
+}
+
+// platformNotes is what macOS has to say to the developer.
+func platformNotes() []string {
+	b := &bridge
+	b.mu.Lock()
+	loaded := b.load()
+	b.mu.Unlock()
+	fromMain := time.Since(time.Unix(0, b.mainPollAt.Load())) < 3*time.Second
+	return macNotes(loaded, b.polled.Load(), fromMain, b.hidOff.Load())
 }

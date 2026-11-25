@@ -19,6 +19,7 @@ var (
 	styleDim  = lipgloss.NewStyle().Foreground(lipgloss.Color("#7d8899"))
 	styleDot  = lipgloss.NewStyle().Foreground(lipgloss.Color("#3bc9db")).Bold(true)
 	styleHead = lipgloss.NewStyle().Bold(true)
+	styleNote = lipgloss.NewStyle().Foreground(lipgloss.Color("#f2c38b"))
 )
 
 // grid is a small sheet of cells, each a rune and a style.

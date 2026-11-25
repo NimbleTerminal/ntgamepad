@@ -12,7 +12,7 @@ Read this whole prompt before starting.
 
 macOS does not recognise this controller (USB vendor `0x057e`, product
 `0x2069`), and the controller sends nothing until told to. `ntgamepad`
-carries its own driver (`switch2.go`, `switch2_darwin.go`): it sends a
+carries its own driver (`switch2.go`, `hid_darwin.go`): it sends a
 start-up sequence over the pad's vendor USB interface, after which the pad's
 HID interface streams input reports. That fixes programs that use
 `ntgamepad`. Measured on macOS 27.2 (2026-11-22):
