@@ -145,6 +145,10 @@ func clamp(v, lo, hi float64) float64 {
 
 // Reader polls the connected controllers. Its methods never block. A Reader
 // is for one goroutine at a time.
+//
+// On macOS, poll from the main goroutine to be shown every controller the
+// system supports; a poll from another goroutine is shown only the pads this
+// package has a driver for. See the README.
 type Reader interface {
 	// Poll returns the connected controller with the lowest Index, or the
 	// zero State when there is none.

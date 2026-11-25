@@ -63,7 +63,7 @@ for frame() {
 | Platform | Reads | State |
 | --- | --- | --- |
 | Browser (`js/wasm`) | `navigator.getGamepads()` | Demo page runs in Chrome and Firefox; both list the Switch 2 Pro Controller, Safari does not |
-| macOS | Built-in HID drivers for the Switch 2 Pro Controller (USB) and the DualSense (Bluetooth, USB); GameController.framework for the rest | Both built-in drivers work in a terminal program; the framework path lists nothing there (see below) |
+| macOS | GameController.framework, pumped from polls on the main goroutine; built-in HID drivers for the Switch 2 Pro Controller (USB) and the DualSense | Framework path and both drivers work in a terminal program with a DualSense; other pads untried |
 | Linux | `/dev/input/js0`–`js3` | Compiles; event decoding tested without a device |
 | Windows, others | nothing | Reports no controllers |
 
@@ -73,7 +73,7 @@ every button. Add a row when you do.
 | Platform | Controller | Result |
 | --- | --- | --- |
 | macOS 27.2, USB | Nintendo Switch 2 Pro Controller | Works with the built-in driver: sticks and buttons read correctly in the probe. Unplugging and replugging while a program runs is not yet tried. |
-| macOS 27.2, Bluetooth | Sony DualSense | Found by the built-in driver from a terminal program and read at rest, in the pad's enhanced mode. Buttons not yet checked one by one; USB not tried. |
+| macOS 27.2, Bluetooth | Sony DualSense | Through the framework from a terminal program: listed, left stick and Cross read live. Through the HID driver: found and read at rest in the pad's enhanced mode. Other buttons and USB not checked. |
 
 ### Browser
 
@@ -99,23 +99,44 @@ itself reports.
 
 ### macOS
 
-Needs macOS 11 or later.
+Needs macOS 11 or later. No entitlement, `Info.plist`, app bundle or helper
+program is needed.
 
-GameController.framework lists controllers only to a program whose main
-thread runs a run loop. Measured on macOS 27.2 with a DualSense: a program
-that runs the main run loop is shown the pad, and one that does not, or that
-runs a loop on another thread, is shown none. A Go terminal program is the
-second kind, so for it the framework path reports nothing. That is why the
-pads below have drivers of their own, which read the pad over HID and need
-no run loop. In a program that does run a main run loop, the framework path
-works, and the reader switches on
-`GCController.shouldMonitorBackgroundEvents` (macOS 11.3) so input arrives
-while the program is not frontmost.
+Controllers reach a program two ways, and the reader uses both:
+
+- **GameController.framework**, for every pad Apple supports. The framework
+  hands a program its controllers through the main run loop, which a Go
+  program does not have. So the package keeps the main goroutine on the main
+  thread and, when a poll is made from it, lets the main run loop handle what
+  is waiting first. Measured with a DualSense on macOS 27.2: a Go terminal
+  program polling from its main goroutine is shown the pad within 50 ms and
+  reads its sticks and buttons; one that never runs the loop is shown none.
+- **Built-in HID drivers**, for a pad Apple does not support (the Switch 2
+  Pro Controller) and for a program that polls from another goroutine, where
+  the framework shows nothing (the DualSense, so far).
+
+What this asks of a program:
+
+- **Poll from the main goroutine** to get every pad the system supports. A
+  Bubble Tea program does already: `Update` runs on the goroutine that called
+  `Run`. Polling from another goroutine still works, for the pads with a
+  driver of their own.
+- **The main goroutine stays on the main thread.** Importing the package
+  pins it there (`runtime.LockOSThread` in `init`), as libraries that need
+  the main thread do.
+- A poll from the main goroutine also runs whatever else is waiting on the
+  main run loop, without waiting for more.
+
+The reader switches on `GCController.shouldMonitorBackgroundEvents` (macOS
+11.3), so input arrives while the program is not the frontmost app. Set
+`NTGAMEPAD_HID=off` to leave the HID drivers out and see what the framework
+reports alone.
 
 ### DualSense (macOS, Bluetooth and USB)
 
-Read over HID by a built-in driver: no run loop, nothing to install, no
-permission asked for.
+A program that polls from its main goroutine gets this pad from the system
+framework. One that polls elsewhere gets it from a built-in driver that reads
+it over HID, about a second after it connects.
 
 - The pad reports in one of two forms, depending on what else on the machine
   has spoken to it; the driver reads both and uses whichever arrived last.

@@ -6,6 +6,7 @@ package ntgamepad
 
 import (
 	"runtime"
+	"slices"
 	"sync"
 	"time"
 	"unsafe"
@@ -109,6 +110,9 @@ type sw2Driver struct {
 	// goroutine holds it only to publish or remove a pad, never during I/O.
 	mu   sync.Mutex
 	pads []*sw2Pad
+	// seenHID is the DualSense locations the goroutine's last pass found;
+	// only the goroutine uses it.
+	seenHID []uint64
 
 	ioServiceMatching, ioServiceGetMatchingServices, ioIteratorNext, ioObjectRelease *cfn
 	ioRegistryEntryCreateCFProperty, cfRelease                                       *cfn
@@ -752,8 +756,10 @@ func (d *sw2Driver) readDualSense(p *sw2Pad) (dualSenseInput, bool) {
 
 // poll appends the State of every live pad to dst. The caller holds one OS
 // thread and an autorelease pool. A pad that does not answer is marked dead
-// for the goroutine to free.
-func (d *sw2Driver) poll(dst []State) []State {
+// for the goroutine to free. When the system framework is listing the
+// DualSense to this program, the driver's own DualSense is let go, so the
+// pad is shown once.
+func (d *sw2Driver) poll(dst []State, frameworkHasDualSense bool) []State {
 	if !d.ok {
 		return dst
 	}
@@ -773,7 +779,7 @@ func (d *sw2Driver) poll(dst []State) []State {
 			dst = append(dst, switch2State(p.slot, in, p.cal))
 		case kindDualSense:
 			in, ok := d.readDualSense(p)
-			if !ok {
+			if !ok || frameworkHasDualSense {
 				p.dead = true
 				continue
 			}
@@ -781,22 +787,6 @@ func (d *sw2Driver) poll(dst []State) []State {
 		}
 	}
 	return dst
-}
-
-// live reports whether a pad of the kind is being read. The system's own
-// controller framework may list the same pad; the reader shows it once.
-func (d *sw2Driver) live(kind *hidKind) bool {
-	if !d.ok {
-		return false
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for _, p := range d.pads {
-		if p.kind == kind && !p.dead {
-			return true
-		}
-	}
-	return false
 }
 
 // run is the background goroutine: once a second it frees pads that died
@@ -838,9 +828,23 @@ func (d *sw2Driver) discover() {
 		d.bringUp(kindSwitch2, u.location, u.service)
 		d.objectRelease(u.service)
 	}
-	for _, location := range d.findHID(kindDualSense) {
-		d.bringUp(kindDualSense, location, 0)
+	bridge.mu.Lock()
+	framework := bridge.serves(dualSenseName)
+	bridge.mu.Unlock()
+	if framework {
+		d.seenHID = nil
+		return // the framework is showing this program the DualSense
 	}
+	// A pad is taken up only on the second pass that finds it, a second after
+	// the first: a program that polls from the main thread is shown the pad
+	// by the framework well within that, and the driver then stands aside.
+	found := d.findHID(kindDualSense)
+	for _, location := range found {
+		if slices.Contains(d.seenHID, location) {
+			d.bringUp(kindDualSense, location, 0)
+		}
+	}
+	d.seenHID = found
 }
 
 // findHID lists the locations of the attached HID devices of a kind.

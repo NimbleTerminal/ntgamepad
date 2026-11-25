@@ -5,9 +5,12 @@
 package ntgamepad
 
 import (
+	"os"
 	"runtime"
 	"slices"
 	"sync"
+	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/go-webgpu/goffi/ffi"
@@ -26,6 +29,15 @@ import (
 //   - The framework finds controllers through the main run loop. A program
 //     that never runs one may see none; the README says what was observed.
 
+// The framework hands a program its controllers through the main run loop,
+// so they are seen only by a program whose main thread runs one. A Go
+// program has no such loop, but it can run one itself: the main goroutine is
+// kept on the main thread, and a poll made from it lets the main run loop
+// handle what is waiting before asking for the controllers. A poll made from
+// another goroutine cannot do that, and is shown only what the HID drivers
+// read (switch2_darwin.go).
+func init() { runtime.LockOSThread() }
+
 type objcID uintptr
 type objcSEL uintptr
 
@@ -36,6 +48,9 @@ type gcBridge struct {
 	mu sync.Mutex
 	// background is set once shouldMonitorBackgroundEvents has been tried.
 	background bool
+	// mainPollAt is when a poll last ran on the main thread, in Unix
+	// nanoseconds: only then can the framework see controllers.
+	mainPollAt atomic.Int64
 	// slots keeps each controller's Index while it stays connected.
 	slots [MaxPads]gcSlot
 
@@ -44,6 +59,9 @@ type gcBridge struct {
 	objcMsgSend     unsafe.Pointer
 	poolPush        unsafe.Pointer
 	poolPop         unsafe.Pointer
+	runLoopRun      unsafe.Pointer
+	runLoopMode     uintptr
+	pthreadMain     unsafe.Pointer
 
 	cifPtr1    types.CallInterface // ptr f(ptr)
 	cifPush    types.CallInterface // ptr f(void)
@@ -54,6 +72,8 @@ type gcBridge struct {
 	cifBool    types.CallInterface // BOOL msg(self, sel)
 	cifBoolSel types.CallInterface // BOOL msg(self, sel, sel)
 	cifSetBool types.CallInterface // void msg(self, sel, BOOL)
+	cifRunLoop types.CallInterface // int32 CFRunLoopRunInMode(mode, double, Boolean)
+	cifIsMain  types.CallInterface // int pthread_main_np(void)
 
 	clsGCController objcID
 	selControllers  objcSEL
@@ -127,6 +147,25 @@ func (b *gcBridge) load() bool {
 				return
 			}
 		}
+		cf, err := ffi.LoadLibrary("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+		if err != nil {
+			return
+		}
+		libsystem, err := ffi.LoadLibrary("/usr/lib/libSystem.B.dylib")
+		if err != nil {
+			return
+		}
+		if b.runLoopRun, err = ffi.GetSymbol(cf, "CFRunLoopRunInMode"); err != nil {
+			return
+		}
+		mode, err := ffi.GetSymbol(cf, "kCFRunLoopDefaultMode")
+		if err != nil {
+			return
+		}
+		b.runLoopMode = *(*uintptr)(mode) // the symbol is a CFStringRef variable
+		if b.pthreadMain, err = ffi.GetSymbol(libsystem, "pthread_main_np"); err != nil {
+			return
+		}
 		ptr, u8 := types.PointerTypeDescriptor, types.UInt8TypeDescriptor
 		void := types.VoidTypeDescriptor
 		for _, c := range []struct {
@@ -143,6 +182,8 @@ func (b *gcBridge) load() bool {
 			{&b.cifBool, u8, []*types.TypeDescriptor{ptr, ptr}},
 			{&b.cifBoolSel, u8, []*types.TypeDescriptor{ptr, ptr, ptr}},
 			{&b.cifSetBool, void, []*types.TypeDescriptor{ptr, ptr, u8}},
+			{&b.cifRunLoop, types.SInt32TypeDescriptor, []*types.TypeDescriptor{ptr, types.DoubleTypeDescriptor, u8}},
+			{&b.cifIsMain, types.SInt32TypeDescriptor, nil},
 		} {
 			if ffi.PrepareCallInterface(c.cif, types.DefaultCall, c.ret, c.args) != nil {
 				return
@@ -289,6 +330,31 @@ func (b *gcBridge) setBool(self objcID, cmd objcSEL, v bool) {
 	_, _ = ffi.CallFunction(&b.cifSetBool, b.objcMsgSend, nil, []unsafe.Pointer{unsafe.Pointer(&self), unsafe.Pointer(&cmd), unsafe.Pointer(&arg)})
 }
 
+// onMainThread reports whether the caller is on the program's main thread.
+func (b *gcBridge) onMainThread() bool {
+	var res [8]byte
+	_, _ = ffi.CallFunction(&b.cifIsMain, b.pthreadMain, unsafe.Pointer(&res), nil)
+	return res[0] != 0
+}
+
+// pumpMain lets the main run loop handle what is waiting, without waiting
+// for more: the framework's news of controllers coming and going, and their
+// input. The caller is on the main thread.
+func (b *gcBridge) pumpMain() {
+	const handledSource = 4 // kCFRunLoopRunHandledSource: there may be more
+	for range 8 {
+		mode, secs := b.runLoopMode, 0.0
+		var once [8]byte
+		once[0] = 1
+		var res [8]byte
+		_, _ = ffi.CallFunction(&b.cifRunLoop, b.runLoopRun, unsafe.Pointer(&res),
+			[]unsafe.Pointer{unsafe.Pointer(&mode), unsafe.Pointer(&secs), unsafe.Pointer(&once)})
+		if *(*int32)(unsafe.Pointer(&res)) != handledSource {
+			return
+		}
+	}
+}
+
 // monitorBackground asks the framework, once, to deliver controller input
 // while the program is not the frontmost app (macOS 11.3 and later).
 func (b *gcBridge) monitorBackground() {
@@ -332,7 +398,11 @@ type darwinReader struct{ closed bool }
 // frameworks and the framework's own start-up (about 9 ms together) are paid
 // here and not in a frame.
 func openPlatform() Reader {
-	sw2.begin()
+	// NTGAMEPAD_HID=off leaves the HID drivers out, to check what the
+	// system framework reports by itself.
+	if os.Getenv("NTGAMEPAD_HID") != "off" {
+		sw2.begin()
+	}
 	r := &darwinReader{}
 	_ = r.PollAll(nil)
 	return r
@@ -364,6 +434,10 @@ func (r *darwinReader) PollAll(dst []State) []State {
 	defer b.popPool(pool)
 
 	b.monitorBackground()
+	if b.onMainThread() {
+		b.pumpMain()
+		b.mainPollAt.Store(time.Now().UnixNano())
+	}
 	b.assignSlots()
 	for i := range b.slots {
 		slot := &b.slots[i]
@@ -372,7 +446,7 @@ func (r *darwinReader) PollAll(dst []State) []State {
 		}
 		dst = append(dst, b.read(i, slot))
 	}
-	dst = sw2.poll(dst)
+	dst = sw2.poll(dst, b.serves(dualSenseName))
 	slices.SortFunc(dst, func(x, y State) int { return x.Index - y.Index })
 	return dst
 }
@@ -390,9 +464,6 @@ func (b *gcBridge) assignSlots() {
 			ctrl := b.sendIdx(arr, b.selObjectAtIdx, i)
 			if ctrl == 0 || b.send0(ctrl, b.selExtGamepad) == 0 {
 				continue
-			}
-			if b.readOverHID(ctrl) {
-				continue // the HID driver reports this pad; show it once
 			}
 			held := false
 			for s := range b.slots {
@@ -425,15 +496,19 @@ func (b *gcBridge) assignSlots() {
 	}
 }
 
-// readOverHID reports whether the HID driver is already reading the pad the
-// framework lists as ctrl. The framework names a DualSense as the driver
-// does.
-func (b *gcBridge) readOverHID(ctrl objcID) bool {
-	if !sw2.live(kindDualSense) {
-		return false
+// serves reports whether the framework is listing a controller by this
+// name to polls made on the main thread, so that the HID driver for the same
+// pad stands aside and the pad is shown once. The caller holds b.mu.
+func (b *gcBridge) serves(name string) bool {
+	if time.Since(time.Unix(0, b.mainPollAt.Load())) > 3*time.Second {
+		return false // nobody polls from the main thread: the framework is blind
 	}
-	ns := b.send0(ctrl, b.selVendorName)
-	return ns != 0 && cString(b.sendPtr(ns, b.selUTF8String)) == dualSenseName
+	for i := range b.slots {
+		if b.slots[i].ctrl != 0 && b.slots[i].name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // read is the current State of the controller in a slot.

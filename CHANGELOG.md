@@ -2,12 +2,18 @@
 
 ## Unreleased
 
-- **DualSense on macOS**: a built-in HID driver for Sony's DualSense, over
-  Bluetooth and USB, reading both the pad's plain report and its enhanced
-  Bluetooth report. GameController.framework lists controllers only to
-  programs that run a main run loop, so a terminal program saw none; the
-  driver needs no run loop. A pad the driver reads is not reported a second
-  time through the framework.
+- **Every controller macOS supports, in a terminal program**:
+  GameController.framework hands a program its controllers through the main
+  run loop, so a Go terminal program was shown none. The package now keeps
+  the main goroutine on the main thread (`runtime.LockOSThread` in `init`)
+  and a poll made from it lets the main run loop handle what is waiting, so
+  the framework's controllers and their input arrive. Poll from the main
+  goroutine to get them; a Bubble Tea `Update` already does.
+- **DualSense HID driver on macOS**: for programs that poll from another
+  goroutine, a built-in driver reads Sony's DualSense over HID, over
+  Bluetooth and USB, in both its plain and its enhanced report. It stands
+  aside when the framework is showing the program the same pad.
+- `NTGAMEPAD_HID=off` leaves the HID drivers out, as a diagnostic.
 
 ## v0.1.0 (2026-11-22)
 
