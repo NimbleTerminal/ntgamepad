@@ -65,6 +65,19 @@ tasks:
       - for: {var: FUZZ_TARGETS}
         cmd: go test -mod=readonly -run='^$' -fuzz='^{{.ITEM}}$' -fuzztime={{.FUZZTIME}} .
 
+  test:wasm:
+    desc: 'Run the browser reader, compiled to WebAssembly, in Node against a made-up navigator.getGamepads'
+    preconditions:
+      - sh: command -v node
+        msg: 'task test:wasm needs Node.js'
+    cmds:
+      - GOOS=js GOARCH=wasm go test -mod=readonly -count=1 -exec "$(go env GOROOT)/lib/wasm/go_js_wasm_exec" .
+
+  screenshots:
+    desc: 'Regenerate docs/images/pad-*.png from the controller viewer''s render test'
+    cmds:
+      - PAD_WRITE_PNG={{.ROOT_DIR}}/docs/images go -C examples test -count=1 -run TestDrawPadShowsState ./pad
+
   probe:
     desc: 'Print what the attached controllers report (the hardware check)'
     cmds:
@@ -101,3 +114,9 @@ tasks:
       - task: tidy-check
       - task: vet
       - task: test
+      - |
+        if command -v node >/dev/null; then
+          task test:wasm
+        else
+          echo "node not found, skipping the WebAssembly tests"
+        fi

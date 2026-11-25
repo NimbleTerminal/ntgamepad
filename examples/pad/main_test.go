@@ -61,7 +61,7 @@ func TestDrawPadShowsState(t *testing.T) {
 		t.Fatal("a missing controller draws the same as a connected one")
 	}
 	if dir := os.Getenv("PAD_WRITE_PNG"); dir != "" {
-		for name, img := range map[string]*image.RGBA{"held.png": held, "idle.png": idle, "none.png": none} {
+		for name, img := range map[string]*image.RGBA{"pad-held.png": held, "pad-idle.png": idle, "pad-none.png": none} {
 			f, err := os.Create(filepath.Join(dir, name))
 			if err != nil {
 				t.Fatal(err)

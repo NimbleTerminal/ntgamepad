@@ -20,6 +20,13 @@
   has a stable `Code` a program can act on and an English `Text`, which is
   not translated. The probe and the controller viewer print them.
 - `NTGAMEPAD_HID=off` leaves the HID drivers out, as a diagnostic.
+- **Browser reader tested as WebAssembly**: `task test:wasm` runs it in Node
+  against a made-up `navigator.getGamepads`. It found and fixed two faults:
+  two controllers could be given the same slot when the browser numbered
+  one past `MaxPads`, and a list entry that was not a gamepad object
+  panicked the reader.
+- `AGENTS.md` (the repository's rules) and `docs/SOURCES.md` (where each
+  protocol and captured report comes from).
 - Behaviour change on macOS: importing the package now pins the main
   goroutine to the main thread, and a poll from the main goroutine runs what
   is waiting on the main run loop.

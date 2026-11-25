@@ -20,6 +20,10 @@ DualSense**, which the system shows only to programs with a main run loop.
 
 **[Try the live browser demo →](https://nimbleterminal.github.io/ntgamepad/)** Connect a controller and press a button on it.
 
+<p>
+  <a href="https://nimbleterminal.github.io/ntgamepad/"><img src="docs/images/pad-held.png" alt="The controller viewer: a drawn controller with the left trigger, right bumper, Start, d-pad up and the bottom face button lit, and both sticks pushed" width="560"></a>
+</p>
+
 ## Quickstart
 
 ```sh
@@ -249,13 +253,17 @@ the states you want; do not call `Open` in tests. `example_test.go` has one.
 Run `task ci` before submitting changes. It checks Go formatting and module
 tidiness, vets for six targets (macOS, Linux and Windows natively, and
 `js/wasm`), and runs the tests of the library and the examples. It requires
-Go 1.26.8+ and [Task](https://taskfile.dev). Everything that decodes bytes
+Go 1.26.8+ and [Task](https://taskfile.dev), and runs the browser reader in
+Node when Node is installed. [AGENTS.md](./AGENTS.md) states the repository's
+rules, and [docs/SOURCES.md](./docs/SOURCES.md) where each protocol and
+capture comes from. Everything that decodes bytes
 from a device or a browser has a fuzz target. Open work is in
 [ROADMAP.md](./ROADMAP.md).
 
 ```sh
 task ci                 # the full gate
 task fuzz-smoke         # every fuzz target, 5s each (override with FUZZTIME=30s)
+task test:wasm          # the browser reader, as WebAssembly, in Node
 task probe              # print what the attached controllers report
 task pad                # the controller viewer, in this terminal
 task web:serve          # build and serve the browser demos

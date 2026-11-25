@@ -5,6 +5,7 @@
 package ntgamepad
 
 import (
+	"slices"
 	"sync/atomic"
 	"syscall/js"
 )
@@ -43,27 +44,30 @@ func (r *webReader) PollAll(dst []State) []State {
 		return dst
 	}
 	pads := nav.Call("getGamepads")
-	if !pads.Truthy() {
+	if pads.Type() != js.TypeObject {
 		return dst
 	}
 	var listed, skipped int32
+	var taken [MaxPads]bool
 	defer func() { webListed.Store(listed); webSkipped.Store(skipped) }()
 	for i := 0; i < pads.Length() && len(dst) < MaxPads; i++ {
 		gp := pads.Index(i)
-		if !gp.Truthy() || !gp.Get("connected").Bool() {
+		// A slot the browser has left empty is null; anything else that is
+		// not a connected gamepad object is passed over too.
+		if gp.Type() != js.TypeObject || !gp.Get("connected").Truthy() {
 			continue
 		}
 		listed++
 		r.axes, r.down, r.vals = r.axes[:0], r.down[:0], r.vals[:0]
-		if axes := gp.Get("axes"); axes.Truthy() {
+		if axes := gp.Get("axes"); axes.Type() == js.TypeObject {
 			for j := 0; j < axes.Length() && j < 8; j++ {
 				r.axes = append(r.axes, number(axes.Index(j)))
 			}
 		}
-		if btns := gp.Get("buttons"); btns.Truthy() {
+		if btns := gp.Get("buttons"); btns.Type() == js.TypeObject {
 			for j := 0; j < btns.Length() && j < 32; j++ {
 				b := btns.Index(j)
-				if !b.Truthy() {
+				if b.Type() != js.TypeObject {
 					r.down, r.vals = append(r.down, false), append(r.vals, 0)
 					continue
 				}
@@ -75,11 +79,21 @@ func (r *webReader) PollAll(dst []State) []State {
 		if id := gp.Get("id"); id.Type() == js.TypeString {
 			name = id.String()
 		}
-		index := len(dst)
+		// The browser's own index is the slot, when it is one of ours and
+		// free; a pad the browser numbers past MaxPads takes the lowest free.
+		index := -1
 		if idx := gp.Get("index"); idx.Type() == js.TypeNumber {
-			if n := idx.Int(); n >= 0 && n < MaxPads {
+			if n := idx.Int(); n >= 0 && n < MaxPads && !taken[n] {
 				index = n
 			}
+		}
+		for n := 0; index < 0 && n < MaxPads; n++ {
+			if !taken[n] {
+				index = n
+			}
+		}
+		if index < 0 {
+			break // every slot is in use
 		}
 		standard := false
 		if m := gp.Get("mapping"); m.Type() == js.TypeString {
@@ -88,12 +102,15 @@ func (r *webReader) PollAll(dst []State) []State {
 		switch {
 		case standard:
 			dst = append(dst, standardState(index, name, r.axes, r.down, r.vals))
+			taken[index] = true
 		case isSwitch2Web(name, len(r.axes), len(r.down)):
 			dst = append(dst, switch2WebState(index, r.axes, r.down))
+			taken[index] = true
 		default:
 			skipped++
 		}
 	}
+	slices.SortFunc(dst, func(a, b State) int { return a.Index - b.Index })
 	return dst
 }
 
