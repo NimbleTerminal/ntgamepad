@@ -53,7 +53,7 @@ type model struct {
 	width, height int
 	browser       []string
 	// advice is ntgamepad.Notes: what limits the controllers shown here.
-	advice []string
+	advice []ntgamepad.Note
 }
 
 func newModel(pad ntgamepad.Reader) *model {
@@ -229,7 +229,7 @@ func (m *model) readout() string {
 func (m *model) notes() string {
 	lines := []string{m.readout()}
 	for _, a := range m.advice {
-		lines = append(lines, styleNote.Render("note: "+a))
+		lines = append(lines, styleNote.Render("note: "+a.Text))
 	}
 	if inBrowser {
 		if len(m.browser) == 0 {

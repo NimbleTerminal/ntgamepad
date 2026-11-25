@@ -570,7 +570,7 @@ func (b *gcBridge) read(index int, slot *gcSlot) State {
 }
 
 // platformNotes is what macOS has to say to the developer.
-func platformNotes() []string {
+func platformNotes() []Note {
 	b := &bridge
 	b.mu.Lock()
 	loaded := b.load()

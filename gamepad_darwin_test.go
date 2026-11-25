@@ -111,9 +111,9 @@ func TestDarwinNotesSayWhenPollsAreOffTheMainGoroutine(t *testing.T) {
 	_ = r.Poll()
 	found := false
 	for _, n := range Notes() {
-		found = found || n == noteMacOffMain
+		found = found || n.Code == NotePollOffMainGoroutine
 	}
 	if !found {
-		t.Fatalf("notes = %q, want the off-main-goroutine note", Notes())
+		t.Fatalf("notes = %v, want the off-main-goroutine note", Notes())
 	}
 }

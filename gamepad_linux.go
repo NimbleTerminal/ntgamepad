@@ -106,9 +106,9 @@ func (p *linuxPad) drain() bool {
 }
 
 // platformNotes is what Linux has to say to the developer.
-func platformNotes() []string {
+func platformNotes() []Note {
 	if linuxDenied.Load() {
-		return []string{noteLinuxDenied}
+		return notes(NotePermissionDenied)
 	}
 	return nil
 }

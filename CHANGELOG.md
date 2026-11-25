@@ -13,11 +13,12 @@
   goroutine, a built-in driver reads Sony's DualSense over HID, over
   Bluetooth and USB, in both its plain and its enhanced report. It stands
   aside when the framework is showing the program the same pad.
-- **`Notes()`**: plain sentences for the developer about what limits the
-  controllers a program is shown: polling off the main goroutine on macOS, a
-  browser waiting for a button press or listing a controller the package
-  skipped, a joystick device Linux will not let it open, a platform with no
-  support. The probe and the controller viewer print them.
+- **`Notes()`**: what limits the controllers a program is shown, for the
+  developer: polling off the main goroutine on macOS, a browser waiting for
+  a button press or listing a controller the package skipped, a joystick
+  device Linux will not let it open, a platform with no support. Each `Note`
+  has a stable `Code` a program can act on and an English `Text`, which is
+  not translated. The probe and the controller viewer print them.
 - `NTGAMEPAD_HID=off` leaves the HID drivers out, as a diagnostic.
 - Behaviour change on macOS: importing the package now pins the main
   goroutine to the main thread, and a poll from the main goroutine runs what

@@ -79,10 +79,11 @@ func main() {
 		polls++
 
 		if polls%*rate == 0 { // once a second
-			if now := strings.Join(ntgamepad.Notes(), "\n"); now != notes {
+			found := ntgamepad.Notes()
+			if now := fmt.Sprint(found); now != notes {
 				notes = now
-				for _, n := range ntgamepad.Notes() {
-					fmt.Println("note:", n)
+				for _, n := range found {
+					fmt.Printf("note (%s): %s\n", n.Code, n.Text)
 				}
 			}
 		}

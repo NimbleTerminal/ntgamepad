@@ -106,6 +106,6 @@ func number(v js.Value) float64 {
 }
 
 // platformNotes is what the browser has to say to the developer.
-func platformNotes() []string {
+func platformNotes() []Note {
 	return webNotes(int(webListed.Load()), int(webSkipped.Load()))
 }

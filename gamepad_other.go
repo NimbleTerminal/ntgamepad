@@ -15,4 +15,4 @@ func (noopReader) PollAll(dst []State) []State { return dst[:0] }
 func (noopReader) Close() error                { return nil }
 
 // platformNotes says there is no support here.
-func platformNotes() []string { return []string{noteUnsupported} }
+func platformNotes() []Note { return notes(NoteUnsupportedPlatform) }

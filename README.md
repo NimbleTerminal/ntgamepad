@@ -174,25 +174,33 @@ The user needs read access to `/dev/input/js*`.
 
 ## When a controller does not show up
 
-`ntgamepad.Notes()` returns plain sentences about anything that limits which
-controllers the program is shown, on the platform it is running on and given
-how it is polling. It is empty when there is nothing to say.
+`ntgamepad.Notes()` reports anything that limits which controllers the
+program is shown, on the platform it is running on and given how it is
+polling. It is empty when there is nothing to say. Each note has a stable
+`Code` to act on and an English `Text` to read.
 
 ```go
-for _, note := range ntgamepad.Notes() {
-	log.Println("ntgamepad:", note)
+for _, n := range ntgamepad.Notes() {
+	log.Println("ntgamepad:", n.Text)
+	if n.Code == ntgamepad.NoteNeedsButtonPress {
+		showHint() // in the game's own words, and the player's language
+	}
 }
 ```
 
-It is meant for the developer, in a debug view or a log, not for the player.
-What it covers:
+The text is for the developer, in a debug view or a log, and is not
+translated. A game that wants to tell its players something goes by the code
+and writes its own message. What the notes cover:
 
-| Platform | It says so when |
-| --- | --- |
-| macOS | polls come from a goroutine other than the main one, so only the pads with a built-in driver are visible; the system framework could not be loaded; the built-in drivers are switched off |
-| Browser | no controller is listed yet (a button press is needed); the browser lists a controller the package skipped |
-| Linux | a joystick device is there but may not be opened |
-| Elsewhere | the platform has no controller support |
+| Code | Platform | When |
+| --- | --- | --- |
+| `NotePollOffMainGoroutine` | macOS | polls come from a goroutine other than the main one, so only the pads with a built-in driver are visible |
+| `NoteFrameworkUnavailable` | macOS | the system's controller framework could not be loaded |
+| `NoteDriversOff` | macOS | the built-in drivers are switched off (`NTGAMEPAD_HID=off`) |
+| `NoteNeedsButtonPress` | Browser | no controller is listed yet: the browser waits for a button press |
+| `NoteControllerSkipped` | Browser | the browser lists a controller the package skipped |
+| `NotePermissionDenied` | Linux | a joystick device is there but may not be opened |
+| `NoteUnsupportedPlatform` | Elsewhere | the platform has no controller support |
 
 The probe and the controller viewer both print these notes.
 
