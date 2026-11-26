@@ -7,10 +7,12 @@ import (
 	"testing"
 )
 
+const dualSenseRestReport = "d1 80 7e 7f 7f 00 00 01 08 00 00 00 be 4c"
+
 // The enhanced report captured from a real DualSense at rest over Bluetooth
 // reads as sticks near centre, triggers released, nothing pressed.
 func TestDualSenseEnhancedReportAtRest(t *testing.T) {
-	in, ok := dualSenseParseEnhanced(unhex(t, "d1 80 7e 7f 7f 00 00 01 08 00 00 00 be 4c"))
+	in, ok := dualSenseParseEnhanced(unhex(t, dualSenseRestReport))
 	if !ok {
 		t.Fatal("the captured report was refused")
 	}

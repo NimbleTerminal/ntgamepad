@@ -7,7 +7,6 @@ env:
   CGO_ENABLED: '0'
 
 vars:
-  FUZZ_TARGETS: FuzzJoydev FuzzStandardState FuzzSwitch2 FuzzUSBBulkEndpoints
   FUZZTIME: 5s
 
 tasks:
@@ -62,8 +61,14 @@ tasks:
   fuzz-smoke:
     desc: 'Run every fuzz target for FUZZTIME (default 5s)'
     cmds:
-      - for: {var: FUZZ_TARGETS}
-        cmd: go test -mod=readonly -run='^$' -fuzz='^{{.ITEM}}$' -fuzztime={{.FUZZTIME}} .
+      - |
+        set -o pipefail
+        targets=$(go test -mod=readonly -list '^Fuzz' . | sed -n '/^Fuzz/p')
+        if [ -z "$targets" ]; then echo 'No fuzz targets found' >&2; exit 1; fi
+        for target in $targets; do
+          echo "Fuzzing $target"
+          go test -mod=readonly -run='^$' -fuzz="^${target}$" -fuzztime={{.FUZZTIME}} .
+        done
 
   test:wasm:
     desc: 'Run the browser reader, compiled to WebAssembly, in Node against a made-up navigator.getGamepads'

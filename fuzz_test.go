@@ -4,6 +4,7 @@ package ntgamepad
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -29,6 +30,7 @@ func inRange(t *testing.T, s State) {
 func FuzzJoydev(f *testing.F) {
 	f.Add([]byte{0, 0, 0, 0, 0xff, 0x7f, 0x02, 0x00, 0, 0, 0, 0, 1, 0, 0x81, 0x03}, 5)
 	f.Add([]byte{1, 2, 3}, 1)
+	f.Add([]byte{1, 2}, math.MinInt)
 	f.Add([]byte{0, 0, 0, 0, 0x00, 0x80, 0x02, 0xff, 0, 0, 0, 0, 1, 0, 0x01, 0xff}, 9)
 	f.Fuzz(func(t *testing.T, data []byte, split int) {
 		var whole joydev
@@ -38,13 +40,9 @@ func FuzzJoydev(f *testing.F) {
 		inRange(t, whole.state(0, ""))
 
 		// The same bytes arriving in two reads, with the partial event kept.
+		split %= len(data) + 1
 		if split < 0 {
 			split = -split
-		}
-		if len(data) > 0 {
-			split %= len(data) + 1
-		} else {
-			split = 0
 		}
 		var parts joydev
 		used := parts.feed(data[:split])
@@ -84,14 +82,14 @@ func FuzzStandardState(f *testing.F) {
 }
 
 // FuzzSwitch2 decodes arbitrary bytes as the Switch 2 pad's flash replies and
-// input report, and arbitrary numbers as a browser's view of it. Nothing
-// panics, a calibration made of anything still yields a State in range, and
+// input report. Arbitrary calibration data still yields a State in range, and
 // a report is accepted only when it is report 9 and long enough.
 func FuzzSwitch2(f *testing.F) {
-	f.Add([]byte{0xb6, 0x47, 0x87, 0x8e, 0x36, 0x66, 0x86, 0xa6, 0x64}, []byte{9, 0x35, 0x1b, 1, 8, 0, 0xd6, 0x27, 0x8c, 0x79, 0x38, 0x81}, 0.9, -0.9)
-	f.Add([]byte{}, []byte{}, math.NaN(), math.Inf(-1))
-	f.Add([]byte{0xb2, 0xa1, 0, 0, 0, 0, 0, 0, 0, 0, 0}, []byte{9}, 2.0, -2.0)
-	f.Fuzz(func(t *testing.T, flash, report []byte, ax, ay float64) {
+	f.Add(unhex(f, switch2LeftFactoryReply), unhex(f, switch2RestReport))
+	f.Add([]byte{0xb6, 0x47, 0x87, 0x8e, 0x36, 0x66, 0x86, 0xa6, 0x64}, []byte{9, 0x35, 0x1b, 1, 8, 0, 0xd6, 0x27, 0x8c, 0x79, 0x38, 0x81})
+	f.Add([]byte{}, []byte{})
+	f.Add([]byte{0xb2, 0xa1, 0, 0, 0, 0, 0, 0, 0, 0, 0}, []byte{9})
+	f.Fuzz(func(t *testing.T, flash, report []byte) {
 		cal := switch2Calibration{
 			left:  switch2StickFrom(switch2FlashPayload(flash), flash),
 			right: switch2StickFrom(flash, switch2FlashPayload(flash)),
@@ -106,23 +104,64 @@ func FuzzSwitch2(f *testing.F) {
 		}
 		inRange(t, switch2State(0, in, cal))
 		inRange(t, switch2State(0, switch2Input{buttons: 0xffffffff, lx: 0xffff, ly: 0, rx: 0xfff, ry: 1}, cal))
+	})
+}
 
-		pressed := make([]bool, len(report))
-		for i, b := range report {
-			pressed[i] = b&1 != 0
+// FuzzSwitch2Web exercises ID recognition and browser mapping with independent
+// button and axis arrays, including partial arrays and non-finite readings.
+func FuzzSwitch2Web(f *testing.F) {
+	f.Add("Switch 2 Pro Controller (Vendor: 057e Product: 2069)", []byte{127, 128, 0, 25, 0, 190}, make([]byte, 21), 0.9)
+	f.Add("057e-2069-Switch 2 Pro Controller", []byte{127, 128, 25, 190}, make([]byte, 21), 0.0)
+	f.Add("", []byte{0}, []byte{}, math.NaN())
+	f.Add("", []byte{}, []byte{}, math.Inf(-1))
+	f.Fuzz(func(t *testing.T, id string, raw, buttons []byte, x float64) {
+		axes := make([]float64, min(len(raw), 8))
+		for i := range axes {
+			axes[i] = (float64(raw[i]) - 128) / 127
 		}
-		for _, axes := range [][]float64{nil, {ax}, {ax, ay, ay, ax}, {ax, ay, 0, ay, 0, ax}} {
-			inRange(t, switch2WebState(0, axes, pressed))
+		if len(axes) > 0 {
+			axes[0] = x
 		}
-		_ = isSwitch2Web(string(report), len(flash), len(report))
+		down := make([]bool, min(len(buttons), 32))
+		for i := range down {
+			down[i] = buttons[i]&1 != 0
+		}
+		lower := strings.ToLower(id)
+		want := (len(axes) == 4 || len(axes) == 6) && len(buttons) == 21 &&
+			strings.Contains(lower, "057e") && strings.Contains(lower, "2069")
+		if isSwitch2Web(id, len(axes), len(buttons)) != want {
+			t.Fatalf("unexpected recognition for %q, %d axes, %d buttons", id, len(axes), len(buttons))
+		}
+		s := switch2WebState(0, axes, down)
+		inRange(t, s)
+		if len(axes) == 6 {
+			firefox := []float64{axes[0], axes[1], axes[3], axes[5]}
+			if s != switch2WebState(0, firefox, down) {
+				t.Fatal("Chromium and Firefox disagree for equivalent stick inputs")
+			}
+		}
+	})
+}
 
-		// The same bytes as a DualSense's enhanced report.
-		if ds, ok := dualSenseParseEnhanced(report); ok != (len(report) >= 11) {
+// FuzzDualSense checks that short enhanced reports are rejected, axes stay
+// in range, and the trigger buttons follow travel even if their bits differ.
+func FuzzDualSense(f *testing.F) {
+	f.Add(unhex(f, dualSenseRestReport))
+	f.Add(make([]byte, 10))
+	f.Add([]byte{0xd1, 0, 255, 255, 0, 127, 128, 0, 15, 0xff, 0xff})
+	f.Fuzz(func(t *testing.T, report []byte) {
+		in, ok := dualSenseParseEnhanced(report)
+		if ok != (len(report) >= 11) {
 			t.Fatalf("enhanced report of %d bytes accepted: %v", len(report), ok)
-		} else if ok {
-			inRange(t, dualSenseState(0, ds))
 		}
-		inRange(t, dualSenseState(0, dualSenseInput{lx: report0(report), ly: 255, hat: report0(flash), l2: 255, buttons: 0xffffffff}))
+		if !ok {
+			return
+		}
+		s := dualSenseState(0, in)
+		inRange(t, s)
+		if s.Pressed(ButtonL2) != (report[5] >= 128) || s.Pressed(ButtonR2) != (report[6] >= 128) {
+			t.Fatalf("trigger bytes %d, %d produced buttons %016b", report[5], report[6], s.Buttons)
+		}
 	})
 }
 
@@ -139,12 +178,4 @@ func FuzzUSBBulkEndpoints(f *testing.F) {
 			t.Fatalf("endpoints in %#x out %#x have the wrong direction", in, out)
 		}
 	})
-}
-
-// report0 is the first byte of b, or zero.
-func report0(b []byte) uint8 {
-	if len(b) == 0 {
-		return 0
-	}
-	return b[0]
 }
