@@ -67,27 +67,30 @@ for frame() {
 | Platform | Reads | State |
 | --- | --- | --- |
 | Browser (`js/wasm`) | `navigator.getGamepads()` | Demo page runs in Chrome and Firefox; both list the Switch 2 Pro Controller, Safari does not |
-| macOS | GameController.framework, pumped from polls on the main goroutine; built-in HID drivers for the Switch 2 Pro Controller (USB) and the DualSense | Framework path and both drivers work in a terminal program with a DualSense; other pads untried |
+| macOS | GameController.framework, pumped from polls on the main goroutine; built-in HID drivers for the Switch 2 Pro Controller (USB) and the DualSense | Probe observations for the Switch 2 and DualSense appear below |
 | Linux | `/dev/input/js0`–`js3` | Compiles; event decoding tested without a device |
 | Windows, others | nothing | Reports no controllers |
 
-"Tried with a controller" means someone ran `cmd/ntgamepad-probe` and pressed
-every button. Add a row when you do.
+Each row records what someone observed with `cmd/ntgamepad-probe` on the listed hardware.
 
 | Platform | Controller | Result |
 | --- | --- | --- |
 | macOS 27.2, USB | Nintendo Switch 2 Pro Controller | Works with the built-in driver: sticks and buttons read correctly in the probe. Unplugging and replugging while a program runs is not yet tried. |
-| macOS 27.2, Bluetooth | Sony DualSense | Through the framework from a terminal program: listed, left stick and Cross read live. Through the HID driver: found and read at rest in the pad's enhanced mode. Other buttons and USB not checked. |
+| macOS 27.2, Bluetooth | Sony DualSense | Through the framework from a terminal program: listed, left stick and Cross read live. Through the HID driver: found and read at rest in the pad's enhanced mode. Other Bluetooth controls remain unverified. |
+| macOS 27.2, USB | Sony DualSense | One pad stayed in slot 0 as polling switched from HID off the main goroutine to GameController.framework on it. The left stick responded on both paths. Cross also registered on the framework path. |
 
 ### Browser
 
 A browser shows a page no controllers until the user presses a button on one.
 Controllers the browser reports with `mapping: "standard"` are used. Others
 have no known layout and are skipped, except those this package knows by
-name.
+name. A recognized controller keeps its assigned slot until it disconnects,
+including when its browser index is greater than or equal to `MaxPads`.
+Both demos show the assigned slot beside the browser entry.
 
 The Switch 2 Pro Controller is one of those, in Chromium browsers and
-Firefox on macOS, with two limits:
+Firefox on macOS. Both listed it over USB. Stick directions still need a
+hands-on check in each browser. Two limits apply:
 
 - A page cannot start the pad. Something native must have sent the start-up
   sequence since the pad was plugged in: run `cmd/ntgamepad-probe`, or any
@@ -138,9 +141,13 @@ reports alone.
 
 ### DualSense (macOS, Bluetooth and USB)
 
-A program that polls from its main goroutine gets this pad from the system
-framework. One that polls elsewhere gets it from a built-in driver that reads
-it over HID, about a second after it connects.
+Polls on the main goroutine normally read the framework's input. The built-in
+HID driver also discovers each DualSense by its I/O Registry entry. When one
+framework controller and one HID device can be paired, either can supply input
+in the same player slot. If several identical pads appear together, the reader
+keeps the assignments it already has. A pad visible only in the other list may
+have to wait until the pairings are clear. The one-pad handoff was verified over USB on macOS 27.2.
+The two-pad case has synthetic test coverage.
 
 - The pad reports in one of two forms, depending on what else on the machine
   has spoken to it; the driver reads both and uses whichever arrived last.
@@ -199,11 +206,12 @@ and writes its own message. What the notes cover:
 | Code | Platform | When |
 | --- | --- | --- |
 | `NotePollOffMainGoroutine` | macOS | polls come from a goroutine other than the main one, so only the pads with a built-in driver are visible |
-| `NoteFrameworkUnavailable` | macOS | the system's controller framework could not be loaded |
+| `NoteFrameworkUnavailable` | macOS | the macOS controller framework could not be initialized and the reader reports no controllers |
 | `NoteDriversOff` | macOS | the built-in drivers are switched off (`NTGAMEPAD_HID=off`) |
 | `NoteNeedsButtonPress` | Browser | no controller is listed yet: the browser waits for a button press |
+| `NoteGamepadAccessDenied` | Browser | the page’s permissions policy blocks gamepad access. Polling resumes when access returns |
 | `NoteControllerSkipped` | Browser | the browser lists a controller the package skipped |
-| `NotePermissionDenied` | Linux | a joystick device is there but may not be opened |
+| `NotePermissionDenied` | Linux | the latest poll was denied permission to open a joystick device |
 | `NoteUnsupportedPlatform` | Elsewhere | the platform has no controller support |
 
 The probe and the controller viewer both print these notes.
@@ -256,8 +264,9 @@ tidiness, vets for six targets (macOS, Linux and Windows natively, and
 Go 1.26.8+ and [Task](https://taskfile.dev), and runs the browser reader in
 Node when Node is installed. [AGENTS.md](./AGENTS.md) states the repository's
 rules, and [docs/SOURCES.md](./docs/SOURCES.md) where each protocol and
-capture comes from. Everything that decodes bytes
-from a device or a browser has a fuzz target. Open work is in
+capture comes from. On pushes and pull requests, Ubuntu CI runs
+`task fuzz-smoke` against the Linux joystick decoder, browser mappings,
+Switch 2 and DualSense reports, and USB descriptors. Open work is in
 [ROADMAP.md](./ROADMAP.md).
 
 ```sh

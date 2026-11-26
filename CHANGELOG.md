@@ -1,35 +1,37 @@
-# Changelog
+# `ntgamepad` CHANGELOG
 
-## v0.2.0 (2026-11-25)
+## v0.2.0 (2026-11-26)
 
-- **Every controller macOS supports, in a terminal program**:
-  GameController.framework hands a program its controllers through the main
-  run loop, so a Go terminal program was shown none. The package now keeps
-  the main goroutine on the main thread (`runtime.LockOSThread` in `init`)
-  and a poll made from it lets the main run loop handle what is waiting, so
-  the framework's controllers and their input arrive. Poll from the main
-  goroutine to get them; a Bubble Tea `Update` already does.
-- **DualSense HID driver on macOS**: for programs that poll from another
-  goroutine, a built-in driver reads Sony's DualSense over HID, over
-  Bluetooth and USB, in both its plain and its enhanced report. It stands
-  aside when the framework is showing the program the same pad.
-- **`Notes()`**: what limits the controllers a program is shown, for the
-  developer: polling off the main goroutine on macOS, a browser waiting for
-  a button press or listing a controller the package skipped, a joystick
-  device Linux will not let it open, a platform with no support. Each `Note`
-  has a stable `Code` a program can act on and an English `Text`, which is
-  not translated. The probe and the controller viewer print them.
-- `NTGAMEPAD_HID=off` leaves the HID drivers out, as a diagnostic.
-- **Browser reader tested as WebAssembly**: `task test:wasm` runs it in Node
-  against a made-up `navigator.getGamepads`. It found and fixed two faults:
-  two controllers could be given the same slot when the browser numbered
-  one past `MaxPads`, and a list entry that was not a gamepad object
-  panicked the reader.
-- `AGENTS.md` (the repository's rules) and `docs/SOURCES.md` (where each
-  protocol and captured report comes from).
-- Behaviour change on macOS: importing the package now pins the main
-  goroutine to the main thread, and a poll from the main goroutine runs what
-  is waiting on the main run loop.
+- **On macOS, importing ntgamepad now pins the main goroutine to the main OS
+  thread.** Polling from that goroutine pumps the main run loop, so terminal
+  programs can receive controller connections and input from
+  GameController.framework. In Bubble Tea, `Update` runs on the goroutine
+  that called `Run`.
+- The built-in DualSense HID driver reads plain and enhanced reports over
+  USB and Bluetooth when polling off the main goroutine. On macOS 27.2, one
+  USB DualSense kept slot 0 as polling switched from HID to the framework.
+  When multiple identical pads make pairing ambiguous, existing slots take
+  priority. Set `NTGAMEPAD_HID=off` to check the framework alone.
+- Browser controllers keep distinct, stable slots even when the browser
+  numbers a pad past the last available slot or another pad disconnects.
+  Both demos show the slot assigned by the reader. The Switch 2 compatibility
+  badge reports USB detection in Chromium and Firefox on macOS. Stick
+  directions still need a hardware check in each browser.
+- `Notes()` explains what limits controller visibility, including polling
+  off the main goroutine, a browser waiting for a button press or skipping
+  an unknown mapping, and unsupported platforms. Each note has a stable
+  `Code` and English `Text`. The probe and controller viewer display them.
+  The Linux permission note clears on a poll with no denied devices. The
+  macOS framework initialization note explains why the reader returns no pads.
+- When a page's permissions policy denies gamepad access, polls return no
+  controllers and `Notes()` reports `NoteGamepadAccessDenied`. The same
+  reader resumes polling when access returns.
+- `task test:wasm` exercises the browser reader in Node with a simulated
+  `navigator.getGamepads`, including malformed list entries that previously
+  caused a panic. `task fuzz-smoke` discovers targets automatically, with
+  dedicated targets for DualSense reports and Switch 2 browser layouts.
+- Added repository guidelines and a record of protocol sources and hardware
+  observations. [AGENTS.md](./AGENTS.md) · [docs/SOURCES.md](./docs/SOURCES.md)
 
 ## v0.1.0 (2026-11-22)
 
