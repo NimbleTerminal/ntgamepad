@@ -40,6 +40,15 @@ which hardware the bytes in the tests were captured from.
 - **Captured data** (`dualsense_test.go`): the first 14 bytes of one enhanced
   report from one pad (vendor `0x054c`, product `0x0ce6`) at rest over
   Bluetooth on macOS 27.2, 2026-11-25.
+- **USB handoff**, macOS 27.2 (arm64), 2026-11-26. The I/O Registry listed
+  one USB DualSense (vendor `0x054c`, product `0x0ce6`). A single process
+  opened a reader on a worker goroutine, polled for 22 seconds there, then
+  polled the same reader for 22 seconds on the main goroutine. The probe
+  recorded the selected transport from the reader's HID and framework samples.
+  The left stick moved in slot 0 on each path, and Cross registered on the
+  framework path. A repeat at 60 Hz for five seconds per phase saw only slot 0
+  and no disconnect. On the main goroutine, HID continued supplying input
+  until the framework took over.
 
 ## macOS, GameController.framework (`gamepad_darwin.go`)
 

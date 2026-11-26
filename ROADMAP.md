@@ -35,8 +35,11 @@ move to Done with their commit. A prompt an item points to is in
 - [ ] **macOS, other pads through the framework**: an Xbox controller, a
   DualShock 4 and the original Switch Pro Controller should now work in a
   terminal program that polls from its main goroutine. None has been tried.
-- [ ] **Check every DualSense button, and USB.** Found and read at rest over
-  Bluetooth in its enhanced mode; the plain report and USB are untried.
+- [ ] **Check handoff with two identical DualSense controllers on macOS.**
+  One USB pad kept its slot across the handoff. With two pads, move one stick
+  at a time and disconnect each pad to verify player identity.
+- [ ] **Check the remaining DualSense controls on USB and Bluetooth.**
+  See the README hardware table for the inputs observed on each path.
 - [ ] **Linux**: reads the legacy joystick interface with `xpad` numbering,
   untested on hardware. Consider evdev, which reports what each button is.
 - [ ] **Windows**: reports no controllers. XInput can be called without cgo.

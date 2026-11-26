@@ -86,7 +86,7 @@ var (
 // afterwards, except to free it once dead is set.
 type hidPad struct {
 	kind     *hidKind
-	location uint64
+	deviceID uint64 // USB location for Switch 2, HID registry entry ID for DualSense
 	slot     int
 	cal      switch2Calibration // the Switch 2 pad's sticks
 	// Retained: the HID manager, the set of devices it matched (which keeps
@@ -110,14 +110,14 @@ type hidDriver struct {
 	// goroutine holds it only to publish or remove a pad, never during I/O.
 	mu   sync.Mutex
 	pads []*hidPad
-	// seenHID is the DualSense locations the goroutine's last pass found;
+	// seenHID is the DualSense registry entry IDs the goroutine's last pass found;
 	// only the goroutine uses it.
 	seenHID []uint64
 
 	ioServiceMatching, ioServiceGetMatchingServices, ioIteratorNext, ioObjectRelease *cfn
-	ioRegistryEntryCreateCFProperty, cfRelease                                       *cfn
+	ioRegistryEntryCreateCFProperty, ioRegistryEntryGetRegistryEntryID, cfRelease    *cfn
 	hidManagerCreate, hidManagerSetDeviceMatching, hidManagerOpen, hidManagerClose   *cfn
-	hidManagerCopyDevices, hidDeviceGetProperty, hidDeviceCopyMatchingElements       *cfn
+	hidManagerCopyDevices, hidDeviceGetService, hidDeviceCopyMatchingElements        *cfn
 	hidElementGetUsagePage, hidElementGetUsage, hidDeviceGetValue                    *cfn
 	hidValueGetIntegerValue, hidValueGetTimeStamp, hidValueGetLength                 *cfn
 	hidValueGetBytePtr, hidElementGetReportID, hidElementGetType                     *cfn
@@ -196,13 +196,14 @@ func (d *hidDriver) load() bool {
 	d.ioIteratorNext = fn(iokit, "IOIteratorNext", u32, u32)
 	d.ioObjectRelease = fn(iokit, "IOObjectRelease", i32, u32)
 	d.ioRegistryEntryCreateCFProperty = fn(iokit, "IORegistryEntryCreateCFProperty", ptr, u32, ptr, ptr, u32)
+	d.ioRegistryEntryGetRegistryEntryID = fn(iokit, "IORegistryEntryGetRegistryEntryID", i32, u32, ptr)
 	d.cfRelease = fn(cf, "CFRelease", void, ptr)
 	d.hidManagerCreate = fn(iokit, "IOHIDManagerCreate", ptr, ptr, u32)
 	d.hidManagerSetDeviceMatching = fn(iokit, "IOHIDManagerSetDeviceMatching", void, ptr, ptr)
 	d.hidManagerOpen = fn(iokit, "IOHIDManagerOpen", i32, ptr, u32)
 	d.hidManagerClose = fn(iokit, "IOHIDManagerClose", i32, ptr, u32)
 	d.hidManagerCopyDevices = fn(iokit, "IOHIDManagerCopyDevices", ptr, ptr)
-	d.hidDeviceGetProperty = fn(iokit, "IOHIDDeviceGetProperty", ptr, ptr, ptr)
+	d.hidDeviceGetService = fn(iokit, "IOHIDDeviceGetService", u32, ptr)
 	d.hidDeviceCopyMatchingElements = fn(iokit, "IOHIDDeviceCopyMatchingElements", ptr, ptr, ptr, u32)
 	d.hidElementGetUsagePage = fn(iokit, "IOHIDElementGetUsagePage", u32, ptr)
 	d.hidElementGetUsage = fn(iokit, "IOHIDElementGetUsage", u32, ptr)
@@ -551,7 +552,7 @@ func (d *hidDriver) handshake(service uint32, slot int) (switch2Calibration, boo
 	return cal, true
 }
 
-// openHID opens the pad's HID device, matched by its kind and its location,
+// openHID opens the pad's HID device, matched by its kind and device ID,
 // and finds the elements a poll reads. On success the pad owns the retained
 // objects.
 func (d *hidDriver) openHID(p *hidPad) bool {
@@ -572,7 +573,9 @@ func (d *hidDriver) openHID(p *hidPad) bool {
 	}
 	set("VendorID", p.kind.vendor)
 	set("ProductID", p.kind.product)
-	set("LocationID", int64(p.location))
+	if p.kind.usb {
+		set("LocationID", int64(p.deviceID))
+	}
 	d.hidManagerSetDeviceMatching.call(nil, unsafe.Pointer(&p.manager), unsafe.Pointer(&dict))
 	var kr uint64
 	d.hidManagerOpen.call(unsafe.Pointer(&kr), unsafe.Pointer(&p.manager), unsafe.Pointer(&opts))
@@ -582,11 +585,22 @@ func (d *hidDriver) openHID(p *hidPad) bool {
 	}
 	d.hidManagerCopyDevices.call(unsafe.Pointer(&p.devices), unsafe.Pointer(&p.manager))
 	devs := d.send(p.devices, d.selAllObjects)
-	if d.send(devs, d.selCount) == 0 {
+	for i := range uint64(d.send(devs, d.selCount)) {
+		dev := d.sendU64(devs, d.selObjectAtIdx, i)
+		if !p.kind.usb {
+			var svc uint64
+			d.hidDeviceGetService.call(unsafe.Pointer(&svc), unsafe.Pointer(&dev))
+			if id, ok := d.registryID(low32(&svc)); !ok || id != p.deviceID {
+				continue
+			}
+		}
+		p.dev = dev
+		break
+	}
+	if p.dev == 0 {
 		d.closeHID(p)
 		return false
 	}
-	p.dev = d.sendU64(devs, d.selObjectAtIdx, 0)
 	var match uintptr
 	d.hidDeviceCopyMatchingElements.call(unsafe.Pointer(&p.elements), unsafe.Pointer(&p.dev), unsafe.Pointer(&match), unsafe.Pointer(&opts))
 	count := uint64(d.send(p.elements, d.selCount))
@@ -756,12 +770,11 @@ func (d *hidDriver) readDualSense(p *hidPad) (dualSenseInput, bool) {
 
 // poll appends the State of every live pad to dst. The caller holds one OS
 // thread and an autorelease pool. A pad that does not answer is marked dead
-// for the goroutine to free. When the system framework is listing the
-// DualSense to this program, the driver's own DualSense is let go, so the
-// pad is shown once.
-func (d *hidDriver) poll(dst []State, frameworkHasDualSense bool) []State {
+// for the goroutine to free. DualSense samples are reconciled with framework
+// samples before either transport is assigned a slot.
+func (d *hidDriver) poll(dst []State, dual []dualSenseSample) ([]State, []dualSenseSample) {
 	if !d.ok {
-		return dst
+		return dst, dual
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -779,14 +792,14 @@ func (d *hidDriver) poll(dst []State, frameworkHasDualSense bool) []State {
 			dst = append(dst, switch2State(p.slot, in, p.cal))
 		case kindDualSense:
 			in, ok := d.readDualSense(p)
-			if !ok || frameworkHasDualSense {
+			if !ok {
 				p.dead = true
 				continue
 			}
-			dst = append(dst, dualSenseState(p.slot, in))
+			dual = append(dual, dualSenseSample{slotKey{dualSenseSlotKind, p.deviceID}, dualSenseState(-1, in)})
 		}
 	}
-	return dst
+	return dst, dual
 }
 
 // run is the background goroutine: once a second it frees pads that died
@@ -818,7 +831,9 @@ func (d *hidDriver) reap() {
 	d.mu.Unlock()
 	for _, p := range dead {
 		d.closeHID(p)
-		darwinSlots.release(slotKey{kind: p.kind.slotKind, id: p.location})
+		if p.kind.usb {
+			darwinSlots.release(slotKey{kind: p.kind.slotKind, id: p.deviceID})
+		}
 	}
 }
 
@@ -828,26 +843,16 @@ func (d *hidDriver) discover() {
 		d.bringUp(kindSwitch2, u.location, u.service)
 		d.objectRelease(u.service)
 	}
-	bridge.mu.Lock()
-	framework := bridge.serves(dualSenseName)
-	bridge.mu.Unlock()
-	if framework {
-		d.seenHID = nil
-		return // the framework is showing this program the DualSense
-	}
-	// A pad is taken up only on the second pass that finds it, a second after
-	// the first: a program that polls from the main thread is shown the pad
-	// by the framework well within that, and the driver then stands aside.
 	found := d.findHID(kindDualSense)
-	for _, location := range found {
-		if slices.Contains(d.seenHID, location) {
-			d.bringUp(kindDualSense, location, 0)
+	for _, id := range found {
+		if slices.Contains(d.seenHID, id) {
+			d.bringUp(kindDualSense, id, 0)
 		}
 	}
 	d.seenHID = found
 }
 
-// findHID lists the locations of the attached HID devices of a kind.
+// findHID lists the registry entry IDs of the attached HID devices of a kind.
 func (d *hidDriver) findHID(kind *hidKind) []uint64 {
 	name := append([]byte("IOHIDDevice"), 0)
 	np := unsafe.Pointer(&name[0])
@@ -877,45 +882,50 @@ func (d *hidDriver) findHID(kind *hidKind) []uint64 {
 		}
 		vendor, _ := d.registryNumber(svc, "VendorID")
 		product, _ := d.registryNumber(svc, "ProductID")
-		location, ok := d.registryNumber(svc, "LocationID")
+		if vendor == kind.vendor && product == kind.product {
+			if id, ok := d.registryID(svc); ok {
+				out = append(out, id)
+			}
+		}
 		d.objectRelease(svc)
-		if vendor != kind.vendor || product != kind.product || !ok {
-			continue
-		}
-		seen := false
-		for _, l := range out {
-			seen = seen || l == uint64(location)
-		}
-		if !seen {
-			out = append(out, uint64(location))
-		}
 	}
 }
 
-// bringUp makes the pad of a kind at a location live, unless it already is.
+// registryID identifies a single live I/O service, including Bluetooth pads
+// of the same model whose HID LocationID may be shared or missing.
+func (d *hidDriver) registryID(service uint32) (uint64, bool) {
+	var id, kr uint64
+	out := unsafe.Pointer(&id)
+	d.ioRegistryEntryGetRegistryEntryID.call(unsafe.Pointer(&kr), unsafe.Pointer(&service), unsafe.Pointer(&out))
+	return id, low32(&kr) == 0
+}
+
+// bringUp makes the pad of a kind with a given ID live, unless it already is.
 // service is the Switch 2 pad's command interface, to start it through.
-func (d *hidDriver) bringUp(kind *hidKind, location uint64, service uint32) {
+func (d *hidDriver) bringUp(kind *hidKind, id uint64, service uint32) {
 	d.mu.Lock()
 	for _, p := range d.pads {
-		if p.kind == kind && p.location == location {
+		if p.kind == kind && p.deviceID == id {
 			d.mu.Unlock()
 			return
 		}
 	}
 	d.mu.Unlock()
-	key := slotKey{kind: kind.slotKind, id: location}
-	slot, ok := darwinSlots.claim(key)
-	if !ok {
-		return
-	}
-	p := &hidPad{kind: kind, location: location, slot: slot}
+	p := &hidPad{kind: kind, deviceID: id}
 	if kind.usb {
+		// The Switch 2 handshake sets the player LEDs to the assigned slot.
+		key := slotKey{kind: kind.slotKind, id: id}
+		slot, ok := darwinSlots.claim(key)
+		if !ok {
+			return
+		}
+		p.slot = slot
 		p.cal, ok = d.handshake(service, slot)
-	}
-	if !ok || !d.openHID(p) {
-		// Another program may hold the interface, or the pad left; try
-		// again on the next pass.
-		darwinSlots.release(key)
+		if !ok || !d.openHID(p) {
+			darwinSlots.release(key)
+			return
+		}
+	} else if !d.openHID(p) {
 		return
 	}
 	d.mu.Lock()

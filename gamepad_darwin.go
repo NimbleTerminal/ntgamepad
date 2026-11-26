@@ -55,7 +55,9 @@ type gcBridge struct {
 	// drivers were left out (NTGAMEPAD_HID=off).
 	polled, hidOff atomic.Bool
 	// slots keeps each controller's Index while it stays connected.
-	slots [MaxPads]gcSlot
+	slots                 [MaxPads]gcSlot
+	dualSense             dualSenseSlots
+	gcSamples, hidSamples []dualSenseSample
 
 	objcGetClass    unsafe.Pointer
 	selRegisterName unsafe.Pointer
@@ -393,11 +395,10 @@ var darwinSlots slotTable
 const gcSlotKind = 1
 
 // darwinReader reports the controllers GameController.framework knows and,
-// through this package's own driver, the Switch 2 Pro Controller, which the
-// framework does not.
+// through the built-in HID drivers, the Switch 2 Pro Controller and DualSense.
 type darwinReader struct{ closed bool }
 
-// openPlatform starts the Switch 2 driver and polls once, so loading the
+// openPlatform starts the HID drivers and polls once, so loading the
 // frameworks and the framework's own start-up (about 9 ms together) are paid
 // here and not in a frame.
 func openPlatform() Reader {
@@ -452,7 +453,8 @@ func (r *darwinReader) PollAll(dst []State) []State {
 		}
 		dst = append(dst, b.read(i, slot))
 	}
-	dst = hid.poll(dst, b.serves(dualSenseName))
+	dst, b.hidSamples = hid.poll(dst, b.hidSamples[:0])
+	dst = b.dualSense.assign(&darwinSlots, b.gcSamples, b.hidSamples, b.recentMainPoll(), dst)
 	slices.SortFunc(dst, func(x, y State) int { return x.Index - y.Index })
 	return dst
 }
@@ -461,6 +463,7 @@ func (r *darwinReader) PollAll(dst []State) []State {
 // already in a slot keeps it, a new one with an extended gamepad takes the
 // lowest free slot, and a slot whose controller is gone is freed.
 func (b *gcBridge) assignSlots() {
+	b.gcSamples = b.gcSamples[:0]
 	arr := b.send0(b.clsGCController, b.selControllers)
 	var present [MaxPads]bool
 	var fresh []objcID
@@ -490,31 +493,26 @@ func (b *gcBridge) assignSlots() {
 		}
 	}
 	for _, ctrl := range fresh {
-		s, ok := darwinSlots.claim(slotKey{kind: gcSlotKind, id: uint64(ctrl)})
-		if !ok {
-			break
-		}
 		slot := gcSlot{ctrl: ctrl}
 		if ns := b.send0(ctrl, b.selVendorName); ns != 0 {
 			slot.name = cString(b.sendPtr(ns, b.selUTF8String))
+		}
+		key := slotKey{kind: gcSlotKind, id: uint64(ctrl)}
+		if slot.name == dualSenseName {
+			b.gcSamples = append(b.gcSamples, dualSenseSample{key, b.read(-1, &slot)})
+			continue
+		}
+		s, ok := darwinSlots.claim(key)
+		if !ok {
+			continue
 		}
 		b.slots[s] = slot
 	}
 }
 
-// serves reports whether the framework is listing a controller by this
-// name to polls made on the main thread, so that the HID driver for the same
-// pad stands aside and the pad is shown once. The caller holds b.mu.
-func (b *gcBridge) serves(name string) bool {
-	if time.Since(time.Unix(0, b.mainPollAt.Load())) > 3*time.Second {
-		return false // nobody polls from the main thread: the framework is blind
-	}
-	for i := range b.slots {
-		if b.slots[i].ctrl != 0 && b.slots[i].name == name {
-			return true
-		}
-	}
-	return false
+// recentMainPoll reports whether the program has been servicing the framework.
+func (b *gcBridge) recentMainPoll() bool {
+	return time.Since(time.Unix(0, b.mainPollAt.Load())) < 3*time.Second
 }
 
 // read is the current State of the controller in a slot.
@@ -575,6 +573,6 @@ func platformNotes() []Note {
 	b.mu.Lock()
 	loaded := b.load()
 	b.mu.Unlock()
-	fromMain := time.Since(time.Unix(0, b.mainPollAt.Load())) < 3*time.Second
+	fromMain := b.recentMainPoll()
 	return macNotes(loaded, b.polled.Load(), fromMain, b.hidOff.Load())
 }

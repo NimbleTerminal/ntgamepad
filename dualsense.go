@@ -5,8 +5,8 @@ package ntgamepad
 // Sony DualSense (PlayStation 5) controller, read over HID.
 //
 // macOS knows this pad, but only shows it to programs that run a main run
-// loop, which a terminal program does not. Read over HID it needs neither a
-// run loop nor a start-up sequence.
+// loop. Polls on the main goroutine pump that loop. The HID path can read
+// the pad from another goroutine without a run loop or a start-up sequence.
 //
 // The pad reports its state in one of two forms, and which one depends on
 // what else on the machine has spoken to it:
