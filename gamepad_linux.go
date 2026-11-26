@@ -57,18 +57,23 @@ func (p *linuxPad) close() error {
 func (r *linuxReader) Poll() State { return first(r.PollAll(nil)) }
 
 func (r *linuxReader) PollAll(dst []State) []State {
+	return r.pollAll(dst, syscall.Open)
+}
+
+func (r *linuxReader) pollAll(dst []State, open func(string, int, uint32) (int, error)) []State {
 	dst = dst[:0]
 	if r.closed {
 		return dst
 	}
+	denied := false
 	for i := range r.slots {
 		p := &r.slots[i]
 		if !p.open {
 			path := "/dev/input/js" + strconv.Itoa(i)
-			fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+			fd, err := open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 			if err != nil {
 				if errors.Is(err, syscall.EACCES) {
-					linuxDenied.Store(true)
+					denied = true
 				}
 				continue
 			}
@@ -80,6 +85,7 @@ func (r *linuxReader) PollAll(dst []State) []State {
 		}
 		dst = append(dst, p.dev.state(i, p.name))
 	}
+	linuxDenied.Store(denied)
 	return dst
 }
 
