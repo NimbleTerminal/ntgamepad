@@ -115,7 +115,9 @@ tasks:
       - task: vet
       - task: test
       - |
-        if command -v node >/dev/null; then
+        if [ "$(go env GOHOSTOS)" = windows ]; then
+          echo "skipping the WebAssembly tests: Go's Node runner is a shell script, not for Windows"
+        elif command -v node >/dev/null; then
           task test:wasm
         else
           echo "node not found, skipping the WebAssembly tests"
