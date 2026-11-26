@@ -37,7 +37,7 @@ export function detect(nav = navigator) {
   return { browser, name, os, osName };
 }
 
-// report is the list of findings for a browser: each has a level ("yes",
+// report is the list of findings for a browser: each has a level ("yes", "detected",
 // "no" or "unknown"), a subject and what is known about it.
 export function report(d, hasGamepads, secure) {
   if (!hasGamepads) {
@@ -53,10 +53,9 @@ export function report(d, hasGamepads, secure) {
   const needsStart = 'The pad sends nothing until a native program has started it since it was plugged in: run ntgamepad-probe, or anything else built on ntgamepad, once.';
   if (d.os !== 'macos') {
     rows.push({ level: 'unknown', subject: pad, text: `Not tried on ${d.osName}. ntgamepad's driver for this pad is macOS only so far.` });
-  } else if (d.browser === 'chromium') {
-    rows.push({ level: 'yes', subject: pad, text: `${d.name} lists it over USB as a generic gamepad and ntgamepad maps it. ${needsStart}` });
-  } else if (d.browser === 'firefox') {
-    rows.push({ level: 'yes', subject: pad, text: `Firefox lists it over USB as a generic gamepad and ntgamepad maps it. ${needsStart}` });
+  } else if (d.browser === 'chromium' || d.browser === 'firefox') {
+    const observed = d.browser === 'firefox' ? 'Firefox' : 'Chrome';
+    rows.push({ level: 'detected', subject: pad, text: `${observed} on macOS listed it as a generic gamepad. Stick directions still need a hands-on check. ${needsStart}` });
   } else if (d.browser === 'safari') {
     rows.push({ level: 'no', subject: pad, text: 'Safari takes its controllers from macOS, which does not recognise this pad, so a page never sees it. Use a Chromium browser or Firefox.' });
   } else {
@@ -65,7 +64,7 @@ export function report(d, hasGamepads, secure) {
   return rows;
 }
 
-const labels = { yes: 'Works', no: 'Does not work', unknown: 'Not tried' };
+const labels = { yes: 'Works', detected: 'Detected over USB', no: 'Does not work', unknown: 'Not tried' };
 
 export function render(el, nav = navigator) {
   if (!el) return;

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"syscall/js"
 	"testing"
+
+	"nimbleterminal.dev/ntgamepad/internal/browser"
 )
 
 // These tests run the browser reader itself, compiled to WebAssembly, against
@@ -51,7 +53,7 @@ func browserShows(t *testing.T, pads ...*fakePad) {
 		}
 	}
 	fn := js.FuncOf(func(js.Value, []js.Value) any { return js.ValueOf(list) })
-	restore := installGetGamepads(fn)
+	restore := installGetGamepads(fn.Value)
 	t.Cleanup(func() {
 		restore()
 		fn.Release()
@@ -61,7 +63,7 @@ func browserShows(t *testing.T, pads ...*fakePad) {
 // installGetGamepads makes navigator.getGamepads the given function and
 // returns what puts things back. Node has a navigator of its own that cannot
 // be replaced, only added to; where there is none, one is made.
-func installGetGamepads(fn js.Func) (restore func()) {
+func installGetGamepads(fn js.Value) (restore func()) {
 	nav := js.Global().Get("navigator")
 	if !nav.Truthy() {
 		js.Global().Set("navigator", map[string]any{})
@@ -193,7 +195,7 @@ func TestWebSeveralPadsAndBadEntries(t *testing.T) {
 		return js.ValueOf([]any{map[string]any{"connected": true}, 7, "pad", map[string]any{"connected": true, "mapping": "standard", "axes": "no", "buttons": 3}})
 	})
 	defer fn.Release()
-	defer installGetGamepads(fn)()
+	defer installGetGamepads(fn.Value)()
 	for _, p := range r.PollAll(nil) {
 		if p.LeftX != 0 || p.Buttons != 0 {
 			t.Fatalf("a malformed entry read as %+v", p)
@@ -205,5 +207,71 @@ func TestWebSeveralPadsAndBadEntries(t *testing.T) {
 	}
 	if len(r.PollAll(nil)) != 0 || r.Poll().Connected {
 		t.Fatal("a closed reader still reports controllers")
+	}
+}
+
+// A surviving overflow pad keeps its slot when lower browser indexes come
+// and go. Both demos see the assigned slot from the very same poll.
+func TestWebKeepsSlotAcrossPolls(t *testing.T) {
+	r := Open()
+	defer r.Close()
+	pad := func(i int) *fakePad { return &fakePad{index: i, id: "identical", mapping: "standard"} }
+	check := func(want ...int) {
+		t.Helper()
+		pads := r.PollAll(nil)
+		var slots []int
+		browser.Visit(r, func(p browser.Pad) { slots = append(slots, p.Slot) })
+		if !slices.Equal(slots, want) {
+			t.Fatalf("browser entries got slots %v, want %v", slots, want)
+		}
+		ordered := slices.Clone(want)
+		ordered = slices.DeleteFunc(ordered, func(n int) bool { return n < 0 })
+		slices.Sort(ordered)
+		var reported []int
+		for _, p := range pads {
+			reported = append(reported, p.Index)
+		}
+		if !slices.Equal(reported, ordered) {
+			t.Fatalf("reported slots %v, want %v", reported, ordered)
+		}
+	}
+	browserShows(t, pad(0), nil, nil, nil, pad(4))
+	check(0, 1)
+	browserShows(t, nil, nil, nil, nil, pad(4))
+	check(1)
+	browserShows(t, nil, pad(1), pad(2), pad(3), pad(4), pad(5))
+	check(0, 2, 3, 1, -1)
+	browserShows(t, nil, nil, pad(2), pad(3), pad(4), pad(5))
+	check(2, 3, 1, 0)
+}
+
+// A document denied gamepad access reports no pads. The same reader can
+// resume polling, preserving the slot of a controller that stayed connected.
+func TestWebRecoversFromDeniedAccess(t *testing.T) {
+	r := Open()
+	defer r.Close()
+	low := &fakePad{index: 0, id: "first", mapping: "standard"}
+	high := &fakePad{index: 4, id: "survivor", mapping: "standard", buttons: 1, pressed: map[int]bool{0: true}}
+	browserShows(t, low, nil, nil, nil, high)
+	pads := r.PollAll(nil)
+	if len(pads) != 2 || pads[1].Index != 1 {
+		t.Fatalf("initial pads = %+v", pads)
+	}
+
+	deny := js.Global().Get("Function").New(`throw new DOMException("Gamepad access denied", "SecurityError")`)
+	t.Cleanup(installGetGamepads(deny))
+	if got := r.PollAll(pads); len(got) != 0 || r.Poll().Connected {
+		t.Fatalf("denied poll reported controllers: %+v", got)
+	}
+	if got := noteCodes(); !slices.Equal(got, []NoteCode{NoteGamepadAccessDenied}) {
+		t.Fatalf("denied poll notes = %v", got)
+	}
+	browserShows(t, nil, nil, nil, nil, high)
+	got := r.Poll()
+	if got.Index != 1 || got.Name != high.id || !got.Pressed(ButtonSouth) {
+		t.Fatalf("recovered pad = %+v", got)
+	}
+	if got := Notes(); len(got) != 0 {
+		t.Fatalf("notes after access returned = %v", got)
 	}
 }

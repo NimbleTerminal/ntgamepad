@@ -19,6 +19,7 @@ import (
 	"syscall/js"
 
 	"nimbleterminal.dev/ntgamepad"
+	"nimbleterminal.dev/ntgamepad/internal/browser"
 )
 
 var buttons = []struct {
@@ -52,7 +53,7 @@ func main() {
 		pads = pad.PollAll(pads)
 		var b strings.Builder
 		if len(pads) == 0 {
-			b.WriteString(`<p class="empty">No controller yet. Connect one and press any button on it.</p>`)
+			b.WriteString(`<p class="empty">No controller input.</p>`)
 		}
 		for _, raw := range pads {
 			presses[raw.Index] += countBits(raw.JustPressed(prev[raw.Index]))
@@ -63,7 +64,7 @@ func main() {
 			out.Set("innerHTML", s)
 			lastPads = s
 		}
-		if s := browserPads(pads); s != lastSeen {
+		if s := browserPads(pad); s != lastSeen {
 			seen.Set("innerHTML", s)
 			lastSeen = s
 		}
@@ -109,38 +110,17 @@ func stick(b *strings.Builder, name string, x, y float64) {
 		name, x, y, x, -y, name, x, y)
 }
 
-// browserPads lists what navigator.getGamepads() itself returns, and for each
-// whether ntgamepad reported it.
-func browserPads(used []ntgamepad.State) string {
-	nav := js.Global().Get("navigator")
-	if !nav.Truthy() || nav.Get("getGamepads").Type() != js.TypeFunction {
-		return `<p class="empty">This browser has no Gamepad API.</p>`
-	}
-	list := nav.Call("getGamepads")
+// browserPads renders the browser entries from the same poll as the controller view.
+func browserPads(reader ntgamepad.Reader) string {
 	var b strings.Builder
-	for i := 0; i < list.Length(); i++ {
-		gp := list.Index(i)
-		if !gp.Truthy() {
-			continue
-		}
-		mapping := gp.Get("mapping").String()
-		if mapping != "standard" {
-			mapping = "none"
-		}
-		note := "skipped: no standard mapping, and not a controller ntgamepad knows by name"
-		for _, p := range used {
-			if p.Index == gp.Get("index").Int() {
-				note = "used"
-				if mapping == "none" {
-					note = "used, with ntgamepad's own mapping"
-				}
-			}
-		}
-		fmt.Fprintf(&b, `<li><code>%s</code> · %d axes, %d buttons · mapping: %s · %s</li>`,
-			html.EscapeString(gp.Get("id").String()), gp.Get("axes").Length(), gp.Get("buttons").Length(), mapping, note)
+	available := browser.Visit(reader, func(p browser.Pad) {
+		fmt.Fprintf(&b, `<li><code>%s</code> · %s</li>`, html.EscapeString(p.Name), html.EscapeString(p.Description()))
+	})
+	if !available {
+		return `<p class="empty">This page cannot access the Gamepad API.</p>`
 	}
 	if b.Len() == 0 {
-		return `<p class="empty">The browser reports no controllers.</p>`
+		return `<p class="empty">The browser reports no controllers. Connect one and press any button on it.</p>`
 	}
 	return "<ul>" + b.String() + "</ul>"
 }

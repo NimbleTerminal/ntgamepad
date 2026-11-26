@@ -43,13 +43,13 @@ func TestMacNotes(t *testing.T) {
 // A browser explains an empty list, and says when it lists a controller the
 // package skipped.
 func TestWebNotes(t *testing.T) {
-	if got := codesOf(webNotes(0, 0)); !slices.Equal(got, []NoteCode{NoteNeedsButtonPress}) {
+	if got := webNoteCode(0, 0); got != NoteNeedsButtonPress {
 		t.Errorf("no controllers: %q", got)
 	}
-	if got := webNotes(1, 0); got != nil {
+	if got := webNoteCode(1, 0); got != "" {
 		t.Errorf("one controller in use: %v, want nothing", got)
 	}
-	if got := codesOf(webNotes(2, 1)); !slices.Equal(got, []NoteCode{NoteControllerSkipped}) {
+	if got := webNoteCode(2, 1); got != NoteControllerSkipped {
 		t.Errorf("one skipped: %q", got)
 	}
 }
@@ -61,6 +61,7 @@ func TestEveryNoteCodeHasText(t *testing.T) {
 		NotePollOffMainGoroutine: "poll-off-main-goroutine",
 		NoteFrameworkUnavailable: "framework-unavailable",
 		NoteDriversOff:           "drivers-off",
+		NoteGamepadAccessDenied:  "gamepad-access-denied",
 		NoteNeedsButtonPress:     "needs-button-press",
 		NoteControllerSkipped:    "controller-skipped",
 		NotePermissionDenied:     "permission-denied",

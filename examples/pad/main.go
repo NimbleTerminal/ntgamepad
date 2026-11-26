@@ -116,7 +116,7 @@ func (m *model) poll() {
 			delete(m.prev, idx)
 		}
 	}
-	m.browser = browserPads(m.pads)
+	m.browser = browserPads(m.pad)
 	m.advice = ntgamepad.Notes()
 }
 

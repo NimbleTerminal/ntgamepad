@@ -10,4 +10,4 @@ import "nimbleterminal.dev/ntgamepad"
 const inBrowser = false
 
 // browserPads is empty outside a browser.
-func browserPads([]ntgamepad.State) []string { return nil }
+func browserPads(ntgamepad.Reader) []string { return nil }
