@@ -1,5 +1,10 @@
 # `ntgamepad` CHANGELOG
 
+## Unreleased
+
+- Fixed a macOS deadlock when a main-run-loop callback calls `Notes()` or
+  polls another reader while a poll is dispatching events.
+
 ## v0.2.0 (2026-11-26)
 
 - **On macOS, importing ntgamepad now pins the main goroutine to the main OS

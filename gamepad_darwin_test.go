@@ -5,10 +5,18 @@
 package ntgamepad
 
 import (
+	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"syscall"
 	"testing"
+	"time"
+	"unsafe"
+
+	"github.com/go-webgpu/goffi/ffi"
+	"github.com/go-webgpu/goffi/types"
 )
 
 // A poll switches on background monitoring, without which a program that is
@@ -75,12 +83,72 @@ func maxRSS(t *testing.T) int64 {
 var mainOnMainThread, frameworkLoaded bool
 
 func TestMain(m *testing.M) {
+	if os.Getenv("NTGAMEPAD_TEST_RUN_LOOP_CALLBACK") == "1" {
+		if err := pollFromMainQueue(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	bridge.mu.Lock()
 	if frameworkLoaded = bridge.load(); frameworkLoaded {
 		mainOnMainThread = bridge.onMainThread()
 	}
 	bridge.mu.Unlock()
 	os.Exit(m.Run())
+}
+
+// A callback dispatched by Poll can read Notes and poll another reader.
+// The child owns its main thread, and a regression cannot hang the test suite.
+func TestDarwinRunLoopCallbackCanPoll(t *testing.T) {
+	if !frameworkLoaded {
+		t.Skip("GameController.framework did not load")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0])
+	cmd.Env = append(os.Environ(), "NTGAMEPAD_TEST_RUN_LOOP_CALLBACK=1", "NTGAMEPAD_HID=off")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("main-queue callback: %v\n%s", err, out)
+	}
+}
+
+func pollFromMainQueue() error {
+	reader := Open()
+	defer reader.Close()
+	lib, err := ffi.LoadLibrary("/usr/lib/libSystem.B.dylib")
+	if err != nil {
+		return err
+	}
+	queue, err := ffi.GetSymbol(lib, "_dispatch_main_q") // dispatch_get_main_queue()
+	if err != nil {
+		return err
+	}
+	dispatch, err := ffi.GetSymbol(lib, "dispatch_async_f")
+	if err != nil {
+		return err
+	}
+	var cif types.CallInterface
+	ptr := types.PointerTypeDescriptor
+	if err := ffi.PrepareCallInterface(&cif, types.DefaultCall, types.VoidTypeDescriptor, []*types.TypeDescriptor{ptr, ptr, ptr}); err != nil {
+		return err
+	}
+	called := false
+	callback := ffi.NewCallback(func(_ uintptr) {
+		_ = Notes()
+		nested := Open()
+		_ = nested.Poll()
+		_ = nested.Close()
+		called = true
+	})
+	var arg uintptr
+	if _, err := ffi.CallFunction(&cif, dispatch, nil, []unsafe.Pointer{unsafe.Pointer(&queue), unsafe.Pointer(&arg), unsafe.Pointer(&callback)}); err != nil {
+		return err
+	}
+	for !called {
+		reader.Poll()
+	}
+	return nil
 }
 
 // Importing the package keeps the main goroutine on the main thread, which

@@ -132,7 +132,9 @@ What this asks of a program:
   pins it there (`runtime.LockOSThread` in `init`), as libraries that need
   the main thread do.
 - A poll from the main goroutine also runs whatever else is waiting on the
-  main run loop, without waiting for more.
+  main run loop, without waiting for more. A callback can call `Notes()` or
+  poll another reader. A nested poll reads the current controller state
+  without running the loop again.
 
 The reader switches on `GCController.shouldMonitorBackgroundEvents` (macOS
 11.3), so input arrives while the program is not the frontmost app. Set

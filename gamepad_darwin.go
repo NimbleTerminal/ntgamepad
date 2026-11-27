@@ -44,8 +44,11 @@ type objcSEL uintptr
 type gcBridge struct {
 	once sync.Once
 	ok   bool
-	// mu serializes polls: the call interfaces and slots are shared.
+	// mu protects controller reads and slot assignments across readers.
 	mu sync.Mutex
+	// pumping is accessed only on the main OS thread. A run-loop callback
+	// can poll again while the outer poll is still dispatching events.
+	pumping bool
 	// background is set once shouldMonitorBackgroundEvents has been tried.
 	background bool
 	// mainPollAt is when a poll last ran on the main thread, in Unix
@@ -346,6 +349,12 @@ func (b *gcBridge) onMainThread() bool {
 // for more: the framework's news of controllers coming and going, and their
 // input. The caller is on the main thread.
 func (b *gcBridge) pumpMain() {
+	if b.pumping {
+		return
+	}
+	b.pumping = true
+	defer func() { b.pumping = false }()
+
 	const handledSource = 4 // kCFRunLoopRunHandledSource: there may be more
 	for range 8 {
 		mode, secs := b.runLoopMode, 0.0
@@ -427,8 +436,6 @@ func (r *darwinReader) PollAll(dst []State) []State {
 		return dst
 	}
 	b := &bridge
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.polled.Store(true)
 	if !b.load() {
 		return dst
@@ -440,11 +447,16 @@ func (r *darwinReader) PollAll(dst []State) []State {
 	pool := b.pushPool()
 	defer b.popPool(pool)
 
-	b.monitorBackground()
 	if b.onMainThread() {
-		b.pumpMain()
 		b.mainPollAt.Store(time.Now().UnixNano())
+		b.pumpMain() // callbacks may call Notes or poll another reader
+		if r.closed {
+			return dst
+		}
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.monitorBackground()
 	b.assignSlots()
 	for i := range b.slots {
 		slot := &b.slots[i]
