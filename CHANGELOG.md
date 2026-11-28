@@ -1,17 +1,13 @@
 # `ntgamepad` CHANGELOG
 
-## Unreleased
-
-- Fixed a macOS deadlock when a main-run-loop callback calls `Notes()` or
-  polls another reader while a poll is dispatching events.
-
-## v0.2.0 (2026-11-26)
+## v0.2.0 (2026-11-27)
 
 - **On macOS, importing ntgamepad now pins the main goroutine to the main OS
   thread.** Polling from that goroutine pumps the main run loop, so terminal
   programs can receive controller connections and input from
   GameController.framework. In Bubble Tea, `Update` runs on the goroutine
-  that called `Run`.
+  that called `Run`. Run-loop callbacks dispatched during a poll can call
+  `Notes()` or poll another reader without deadlocking.
 - The built-in DualSense HID driver reads plain and enhanced reports over
   USB and Bluetooth when polling off the main goroutine. On macOS 27.2, one
   USB DualSense kept slot 0 as polling switched from HID to the framework.
